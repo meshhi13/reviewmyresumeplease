@@ -1,0 +1,13 @@
+add share link to view resume apge
+add zoom feature to view resume page
+fix styling of view resume page
+make default listing from highest to lowest downvotes
+fix resolve comment styling, also make it so multiple comments can be resolved at once
+profile page should have a tree of fixes. Each resume is a repo that can have changes, and users can choose to upload resumes as a tree
+latex doesnt black out at all, so users can black out their entire resume but the latex itself doesn't get anonymized
+
+
+Low priority: 
+    merge like git for resumes
+
+post projects everywhere on reddit
