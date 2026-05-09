@@ -13,6 +13,7 @@ import tempfile
 
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from prometheus_fastapi_instrumentator import Instrumentator
 from fastapi.responses import Response
 from sqlalchemy import select, text, func
 from sqlalchemy.exc import IntegrityError
@@ -45,6 +46,7 @@ from .schemas import (
 )
 
 app = FastAPI(title="Resume Review Platform API")
+Instrumentator().instrument(app).expose(app)
 
 FAANG_PLUS_COMPANIES = [
     "Meta",

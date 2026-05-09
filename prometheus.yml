@@ -1,0 +1,7 @@
+global:
+  scrape_interval: 15s # How often to pull metrics
+
+scrape_configs:
+  - job_name: 'backend'
+    static_configs:
+      - targets: ['backend:8000'] # Docker service name + port
