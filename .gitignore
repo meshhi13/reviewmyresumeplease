@@ -4,5 +4,12 @@ dist/
 .venv/
 __pycache__/
 .DS_Store
-.env
+
+# Sensitive environment files
+.env*
+!.env.example
+
+# Local notes/scratch
 notes.txt
+scratch/
+*.log

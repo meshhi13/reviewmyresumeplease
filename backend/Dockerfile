@@ -4,33 +4,17 @@ WORKDIR /app
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
-        biber \
         fontconfig \
         fonts-font-awesome \
-        fonts-inter \
         fonts-lato \
-        fonts-noto-color-emoji \
-        fonts-noto-core \
-        fonts-noto-extra \
-        fonts-noto-mono \
-        fonts-open-sans \
         fonts-roboto \
         latexmk \
-        texlive-bibtex-extra \
-        texlive-font-utils \
-        texlive-fonts-extra \
-        texlive-fonts-recommended \
-        texlive-humanities \
         texlive-latex-base \
-        texlive-latex-extra \
         texlive-latex-recommended \
-        texlive-luatex \
-        texlive-pictures \
-        texlive-plain-generic \
-        texlive-pstricks \
-        texlive-publishers \
-        texlive-science \
+        texlive-latex-extra \
+        texlive-fonts-recommended \
         texlive-xetex \
+        texlive-luatex \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt ./

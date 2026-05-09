@@ -1,6 +1,6 @@
 # ResumeReviewPlatform
 
-Minimal MVP sketch for a resume peer review platform.
+Minimal MVP sketch for a reviewmyresumeplease platform.
 
 ## What is included
 

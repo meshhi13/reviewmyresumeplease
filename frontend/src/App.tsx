@@ -9,7 +9,7 @@ import { ResumeViewer } from "./components/ResumeViewer";
 import { FAANG_PLUS_COMPANIES } from "./constants";
 import type { Redaction, SavedResume, Comment, AppNotification } from "./types";
 
-const API = import.meta.env.VITE_API_BASE_URL ?? "http://127.0.0.1:8000";
+const API = import.meta.env.VITE_API_BASE_URL;
 
 const STARTER_LATEX = String.raw`\documentclass[10pt]{article}
 \usepackage[margin=0.65in]{geometry}
@@ -318,14 +318,14 @@ function App() {
   /* ── AUTH ── */
   const authTitle =
     authMode === "create-account" ? "Create your account." :
-    authMode === "forgot-password" ? "Reset your password." :
-    authMode === "reset-password" ? "Choose a new password." :
-    "Sign in to continue.";
+      authMode === "forgot-password" ? "Reset your password." :
+        authMode === "reset-password" ? "Choose a new password." :
+          "Sign in to continue.";
   const authSubmitText =
     authMode === "create-account" ? "Create Account" :
-    authMode === "forgot-password" ? "Send Reset Link" :
-    authMode === "reset-password" ? "Reset Password" :
-    "Sign In";
+      authMode === "forgot-password" ? "Send Reset Link" :
+        authMode === "reset-password" ? "Reset Password" :
+          "Sign In";
   const authView = (
     <main className="auth-screen">
       <form className="auth-panel" onSubmit={handleSignIn}>
@@ -333,7 +333,7 @@ function App() {
           <div className="icon-btn" style={{ width: 48, height: 48, borderRadius: 12, background: "var(--accent-dim)", color: "var(--accent)", border: "none", marginBottom: 8 }}>
             <Shield size={24} />
           </div>
-          <h1>Resume Peer Review</h1>
+          <h1>reviewmyresumeplease</h1>
           <p className="auth-subtitle">{authTitle}</p>
         </div>
         <div className="auth-tabs">
@@ -362,7 +362,6 @@ function App() {
             Back to sign in
           </button>
         )}
-        <p className="status">{status}</p>
       </form>
     </main>
   );
@@ -478,29 +477,29 @@ function App() {
         </header>
         <div className={`latex-workspace ${editorViewMode}`}>
           {editorViewMode !== "preview" && (
-          <div className="latex-editor-pane">
-            <textarea
-              className="latex-source-editor"
-              value={latexSource}
-              spellCheck={false}
-              onChange={e => setLatexSource(e.target.value)}
-            />
-            {compileError && <pre className="latex-error">{compileError}</pre>}
-          </div>
+            <div className="latex-editor-pane">
+              <textarea
+                className="latex-source-editor"
+                value={latexSource}
+                spellCheck={false}
+                onChange={e => setLatexSource(e.target.value)}
+              />
+              {compileError && <pre className="latex-error">{compileError}</pre>}
+            </div>
           )}
           {editorViewMode !== "source" && (
-          <div className="document-stage latex-preview-pane">
-            {!pdf ? (
-              <div className="empty-state"><FileText /><h3>Compile a Preview</h3><p>Your generated resume PDF will appear here for redactions and review.</p></div>
-            ) : (
-              <div className="pages">{pageNumbers.map(n => (
-                <PdfPage key={n} pdf={pdf} pageNumber={n} scale={scale}
-                  redactions={redactions.filter(r => r.page === n)}
-                  addRedaction={r => { if (r.width >= 4 && r.height >= 4) setRedactions(c => [...c, { ...r, id: crypto.randomUUID() }]); }}
-                  removeRedaction={id => setRedactions(c => c.filter(r => r.id !== id))} />
-              ))}</div>
-            )}
-          </div>
+            <div className="document-stage latex-preview-pane">
+              {!pdf ? (
+                <div className="empty-state"><FileText /><h3>Compile a Preview</h3><p>Your generated resume PDF will appear here for redactions and review.</p></div>
+              ) : (
+                <div className="pages">{pageNumbers.map(n => (
+                  <PdfPage key={n} pdf={pdf} pageNumber={n} scale={scale}
+                    redactions={redactions.filter(r => r.page === n)}
+                    addRedaction={r => { if (r.width >= 4 && r.height >= 4) setRedactions(c => [...c, { ...r, id: crypto.randomUUID() }]); }}
+                    removeRedaction={id => setRedactions(c => c.filter(r => r.id !== id))} />
+                ))}</div>
+              )}
+            </div>
           )}
         </div>
       </section>
@@ -515,7 +514,7 @@ function App() {
       <Route path="/*" element={
         <div className="app-shell">
           <header className="top-nav">
-            <Link to="/" className="nav-brand"><Shield size={18} /><span>Resume Peer Review</span></Link>
+            <Link to="/" className="nav-brand"><Shield size={18} /><span>reviewmyresumeplease</span></Link>
             <nav className="nav-links">
               <Link to="/" className={location.pathname === "/" ? "active" : ""}><UsersIcon size={16} /> Browse</Link>
               <Link to="/profile" className={location.pathname === "/profile" ? "active" : ""}><UserIcon size={16} /> Profile</Link>
