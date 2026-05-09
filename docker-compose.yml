@@ -2,23 +2,25 @@ services:
   frontend:
     build:
       context: ./frontend
-    command: npm run dev -- --host 0.0.0.0
     ports:
-      - "5173:5173"
-    volumes:
-      - ./frontend:/app
-      - frontend_node_modules:/app/node_modules
+      - "127.0.0.1:5173:80"
     depends_on:
       - backend
+    env_file:
+      - .env
 
   backend:
     build:
       context: ./backend
-    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    command: gunicorn -w 4 -k uvicorn.workers.UvicornWorker app.main:app --bind 0.0.0.0:8000
     environment:
-      DATABASE_URL: postgresql+psycopg://resume:resume@db:5432/resume_review
+      DATABASE_URL: ${DATABASE_URL}
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS}
+      PASSWORD_RESET_SECRET: ${PASSWORD_RESET_SECRET}
+    env_file:
+      - .env
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     volumes:
       - ./backend:/app
     depends_on:
@@ -28,15 +30,15 @@ services:
   db:
     image: postgres:16-alpine
     environment:
-      POSTGRES_USER: resume
-      POSTGRES_PASSWORD: resume
-      POSTGRES_DB: resume_review
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U resume -d resume_review"]
+      test: [ "CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}" ]
       interval: 5s
       timeout: 5s
       retries: 5

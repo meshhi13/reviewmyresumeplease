@@ -68,9 +68,11 @@ FAANG_PLUS_COMPANIES = [
     "Bloomberg",
 ]
 
+allowed_origins = os.environ["ALLOWED_ORIGINS"].split(",")
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_origins=allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -1233,7 +1235,7 @@ def verify_password_reset_token(token: str) -> str:
 
 
 def password_reset_secret() -> str:
-    return os.getenv("PASSWORD_RESET_SECRET", "local-dev-password-reset-secret")
+    return os.environ["PASSWORD_RESET_SECRET"]
 
 
 def name_from_email(email: str) -> str:

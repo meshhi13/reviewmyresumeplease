@@ -3,9 +3,24 @@ import react from "@vitejs/plugin-react";
 
 export default defineConfig({
   plugins: [react()],
-  
   server: {
     allowedHosts: ['reviewmyresumeplease.com'],
-  }
+    proxy: {
+      "/api": {
+        target: "http://backend:8000",
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/api/, ""),
+      },
+    },
+  },
+  preview: {
+    proxy: {
+      "/api": {
+        target: "http://backend:8000",
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/api/, ""),
+      },
+    },
+  },
 });
 
