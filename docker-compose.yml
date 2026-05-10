@@ -74,7 +74,8 @@ services:
     volumes:
       - grafana_data:/var/lib/grafana
       - ./grafana/provisioning/dashboards/dashboard.yaml:/etc/grafana/provisioning/dashboards/main.yaml
-      - ./grafana/dashboards:/etc/grafana/provisioning/dashboards/filesrestart: unless-stopped
+      - ./grafana/dashboards:/etc/grafana/provisioning/dashboards/files
+    restart: unless-stopped
     networks:
       - app-network
 
