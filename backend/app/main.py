@@ -132,6 +132,8 @@ def on_startup() -> None:
         connection.execute(text("ALTER TABLE resumes ADD COLUMN IF NOT EXISTS latex_source TEXT NOT NULL DEFAULT ''"))
         connection.execute(text("ALTER TABLE resumes ADD COLUMN IF NOT EXISTS landed_companies JSONB NOT NULL DEFAULT '[]'::jsonb"))
         connection.execute(text("ALTER TABLE resumes ADD COLUMN IF NOT EXISTS resolves_comment_id INTEGER"))
+        connection.execute(text("ALTER TABLE resumes ADD COLUMN IF NOT EXISTS parent_resume_id INTEGER"))
+        connection.execute(text("CREATE INDEX IF NOT EXISTS ix_resumes_parent_resume_id ON resumes(parent_resume_id)"))
         connection.execute(text("ALTER TABLE comments ADD COLUMN IF NOT EXISTS resolved_by_resume_id INTEGER"))
         connection.execute(text("ALTER TABLE comments ADD COLUMN IF NOT EXISTS suggestion_start INTEGER"))
         connection.execute(text("ALTER TABLE comments ADD COLUMN IF NOT EXISTS suggestion_end INTEGER"))
@@ -323,6 +325,8 @@ def browse_resumes(
     status: str | None = None,
     search: str | None = None,
     company: str | None = None,
+    min_score: int | None = None,
+    max_score: int | None = None,
     sort: str = "downvotes",
     db: Annotated[Session, Depends(get_db)] = None,
     current_user: Annotated[User, Depends(get_current_user)] = None,
@@ -346,8 +350,14 @@ def browse_resumes(
             r for r in resumes
             if any(saved_company.lower() == company_filter for saved_company in (r.landed_companies or []))
         ]
+    if min_score is not None:
+        resumes = [r for r in resumes if resume_aggregate_score(r) >= min_score]
+    if max_score is not None:
+        resumes = [r for r in resumes if resume_aggregate_score(r) <= max_score]
     if sort == "downvotes":
         resumes.sort(key=resume_downvote_score, reverse=True)
+    elif sort == "score":
+        resumes.sort(key=lambda r: (resume_aggregate_score(r), r.created_at, r.id), reverse=True)
     elif sort == "popular":
         resumes.sort(key=resume_activity_score, reverse=True)
     elif sort == "date_asc":
@@ -371,6 +381,7 @@ def browse_resumes(
             "comment_count": len(r.comments or []),
             "open_comment_count": sum(1 for c in r.comments if c.status == "open"),
             "downvote_count": sum(1 for c in (r.comments or []) for v in c.votes if v.vote == -1),
+            "aggregate_score": resume_aggregate_score(r),
         }
         for r in resumes
     ]
@@ -395,15 +406,38 @@ def list_resumes(
         )
     )
     title_by_resume_id = {r.id: r.title or r.file_name for r in resumes}
-    fix_parent_by_child_id: dict[int, dict[str, int | str]] = {}
+    resume_ids = set(title_by_resume_id)
+    resolved_comment_ids = {r.resolves_comment_id for r in resumes if r.resolves_comment_id}
+    resolved_comments_by_id = {
+        comment.id: comment
+        for comment in db.scalars(select(Comment).where(Comment.id.in_(resolved_comment_ids))).all()
+    } if resolved_comment_ids else {}
+    fix_parent_by_child_id: dict[int, dict[str, int | str | None]] = {}
+    for child in resumes:
+        if child.parent_resume_id and child.parent_resume_id in resume_ids:
+            fix_parent_by_child_id[child.id] = {
+                "resume_id": child.parent_resume_id,
+                "resume_title": title_by_resume_id[child.parent_resume_id],
+                "comment_id": child.resolves_comment_id,
+            }
     for parent in resumes:
         for comment in parent.comments or []:
-            if comment.resolved_by_resume_id:
+            if comment.resolved_by_resume_id and comment.resolved_by_resume_id not in fix_parent_by_child_id:
                 fix_parent_by_child_id[comment.resolved_by_resume_id] = {
                     "resume_id": parent.id,
                     "resume_title": title_by_resume_id[parent.id],
                     "comment_id": comment.id,
                 }
+    for child in resumes:
+        if child.id in fix_parent_by_child_id or not child.resolves_comment_id:
+            continue
+        comment = resolved_comments_by_id.get(child.resolves_comment_id)
+        if comment and comment.resume_id in resume_ids:
+            fix_parent_by_child_id[child.id] = {
+                "resume_id": comment.resume_id,
+                "resume_title": title_by_resume_id[comment.resume_id],
+                "comment_id": comment.id,
+            }
 
     response = []
     for resume in resumes:
@@ -430,6 +464,8 @@ async def save_resume(
     latex_source: str = Form(""),
     landed_companies: str = Form("[]"),
     resolves_comment_id: int | None = Form(None),
+    resolves_comment_ids: str = Form("[]"),
+    parent_resume_id: int | None = Form(None),
 ) -> dict:
     if current_user.id != user_id:
         raise HTTPException(status_code=403, detail="You can only save resumes to your own profile")
@@ -446,9 +482,15 @@ async def save_resume(
     if not isinstance(parsed_companies, list):
         raise HTTPException(status_code=400, detail="Landed companies must be a list")
     validated_companies = validate_landed_companies(parsed_companies)
+    selected_comment_ids = parse_resolves_comment_ids(resolves_comment_ids, resolves_comment_id)
 
     title = clean_text(title)
     notes = clean_text(notes)
+    explicit_parent = None
+    if parent_resume_id:
+        explicit_parent = db.get(Resume, parent_resume_id)
+        if not explicit_parent or explicit_parent.user_id != current_user.id:
+            raise HTTPException(status_code=404, detail="Parent resume not found")
     source = latex_source.strip()
     source_format = "latex" if source else "pdf"
     file_name = "resume.pdf"
@@ -484,30 +526,43 @@ async def save_resume(
         landed_companies=validated_companies,
         anonymized=anonymized,
         notes=notes,
-        resolves_comment_id=resolves_comment_id,
+        parent_resume_id=parent_resume_id,
+        resolves_comment_id=selected_comment_ids[0] if selected_comment_ids else None,
     )
     db.add(resume)
     db.flush()  # get resume.id
 
-    # If this resume resolves a comment, link the comment back to this resume
-    if resolves_comment_id:
-        comment = db.get(Comment, resolves_comment_id)
-        if not comment:
-            raise HTTPException(status_code=404, detail="Issue not found")
-        original_resume = db.get(Resume, comment.resume_id)
+    # If this resume resolves comments, link each issue back to this revision.
+    if selected_comment_ids:
+        comments = list(
+            db.scalars(select(Comment).where(Comment.id.in_(selected_comment_ids)))
+        )
+        if len(comments) != len(selected_comment_ids):
+            raise HTTPException(status_code=404, detail="One or more issues were not found")
+        parent_resume_ids = {comment.resume_id for comment in comments}
+        if len(parent_resume_ids) != 1:
+            raise HTTPException(status_code=400, detail="A single uploaded fix can only resolve comments on one resume")
+        original_resume = db.get(Resume, comments[0].resume_id)
         if not original_resume or original_resume.user_id != current_user.id:
             raise HTTPException(status_code=403, detail="You can only upload fixes for issues on your own resumes")
-        if comment.status != "open":
-            raise HTTPException(status_code=400, detail="This issue is already resolved")
-        comment.resolved_by_resume_id = resume.id
-        create_notification(
-            db,
-            user_id=comment.author_id,
-            actor_id=current_user.id,
-            kind="fix_uploaded",
-            message=f"{current_user.display_name} uploaded a resume revision for your issue",
-            target_url=f"/resume/{original_resume.id}",
-        )
+        if explicit_parent and explicit_parent.id != original_resume.id:
+            raise HTTPException(status_code=400, detail="Selected parent resume must match the resolved comments")
+        resume.parent_resume_id = original_resume.id
+        for comment in comments:
+            if comment.status != "open":
+                raise HTTPException(status_code=400, detail="One or more issues are already resolved")
+            if comment.resolved_by_resume_id:
+                raise HTTPException(status_code=400, detail="One or more issues already have a proposed fix")
+        for comment in comments:
+            comment.resolved_by_resume_id = resume.id
+            create_notification(
+                db,
+                user_id=comment.author_id,
+                actor_id=current_user.id,
+                kind="fix_uploaded",
+                message=f"{current_user.display_name} uploaded a resume revision for your issue",
+                target_url=f"/resume/{original_resume.id}",
+            )
 
     db.commit()
     db.refresh(resume)
@@ -695,7 +750,10 @@ def create_comment(
             if resume.latex_source[suggestion_start:suggestion_end] != suggestion_original:
                 raise HTTPException(status_code=409, detail="Selected LaTeX source no longer matches this resume")
         elif find_visible_text_span(resume.latex_source, suggestion_original) is None:
-            raise HTTPException(status_code=409, detail="Selected resume text no longer matches this resume")
+            # Rendered PDF text can differ from source LaTeX because of commands,
+            # escaped symbols, or layout joins. Keep the suggestion as reviewable
+            # feedback; applying it will re-check against the latest source.
+            pass
         if not suggestion_replacement.strip():
             raise HTTPException(status_code=400, detail="Suggested replacement cannot be empty")
         suggestion_status = "pending"
@@ -1095,6 +1153,24 @@ def resume_downvote_score(resume: Resume) -> tuple[int, int, datetime, int]:
     return (downvotes, len(comments), resume.created_at, resume.id)
 
 
+def resume_aggregate_score(resume: Resume) -> int:
+    comments = resume.comments or []
+    open_issues = sum(1 for c in comments if c.status == "open")
+    resolved_issues = sum(1 for c in comments if c.status == "resolved")
+    pending_suggestions = sum(1 for c in comments if c.suggestion_status == "pending")
+    applied_suggestions = sum(1 for c in comments if c.suggestion_status == "applied")
+    upvotes = sum(1 for c in comments for v in c.votes if v.vote == 1)
+    downvotes = sum(1 for c in comments for v in c.votes if v.vote == -1)
+    score = 100
+    score -= open_issues * 10
+    score -= pending_suggestions * 4
+    score -= downvotes * 3
+    score += resolved_issues * 4
+    score += applied_suggestions * 3
+    score += upvotes * 2
+    return max(0, min(100, score))
+
+
 def find_visible_text_span(source: str, visible_text: str) -> tuple[int, int] | None:
     normalized = " ".join(visible_text.split())
     if not normalized:
@@ -1102,12 +1178,87 @@ def find_visible_text_span(source: str, visible_text: str) -> tuple[int, int] | 
     exact = source.find(visible_text)
     if exact >= 0:
         return exact, exact + len(visible_text)
+    normalized_source, source_spans = normalize_latex_visible_source(source)
+    normalized_visible = normalize_visible_selection(visible_text)
+    if normalized_visible:
+        normalized_match = normalized_source.lower().find(normalized_visible.lower())
+        if normalized_match >= 0:
+            start_span = source_spans[normalized_match]
+            end_span = source_spans[normalized_match + len(normalized_visible) - 1]
+            return start_span[0], end_span[1]
     tokens = normalized.split()
     pattern = r"\s+".join(re.escape(token) for token in tokens)
     match = re.search(pattern, source)
     if not match:
         return None
     return match.start(), match.end()
+
+
+def normalize_visible_selection(text: str) -> str:
+    text = re.sub(r"[\u2022\u25e6\u25aa\u00b7]", " ", text)
+    return " ".join(text.split())
+
+
+def normalize_latex_visible_source(source: str) -> tuple[str, list[tuple[int, int]]]:
+    raw_chars: list[str] = []
+    raw_spans: list[tuple[int, int]] = []
+    i = 0
+    while i < len(source):
+        char = source[i]
+        if char == "\\":
+            if i + 1 >= len(source):
+                i += 1
+                continue
+            next_char = source[i + 1]
+            if next_char in "%&$#_{}":
+                raw_chars.append(next_char)
+                raw_spans.append((i, i + 2))
+                i += 2
+                continue
+            if next_char == "\\":
+                raw_chars.append(" ")
+                raw_spans.append((i, i + 2))
+                i += 2
+                continue
+            command_match = re.match(r"\\[A-Za-z]+\*?", source[i:])
+            if command_match:
+                raw_chars.append(" ")
+                raw_spans.append((i, i + len(command_match.group(0))))
+                i += len(command_match.group(0))
+                continue
+            raw_chars.append(" ")
+            raw_spans.append((i, i + 1))
+            i += 1
+            continue
+        if char in "{}[]":
+            raw_chars.append(" ")
+            raw_spans.append((i, i + 1))
+        elif char == "~":
+            raw_chars.append(" ")
+            raw_spans.append((i, i + 1))
+        else:
+            raw_chars.append(char)
+            raw_spans.append((i, i + 1))
+        i += 1
+
+    normalized_chars: list[str] = []
+    normalized_spans: list[tuple[int, int]] = []
+    whitespace_start: int | None = None
+    whitespace_end: int | None = None
+    for char, span in zip(raw_chars, raw_spans):
+        if char.isspace():
+            whitespace_start = span[0] if whitespace_start is None else whitespace_start
+            whitespace_end = span[1]
+            continue
+        if whitespace_start is not None and normalized_chars:
+            normalized_chars.append(" ")
+            normalized_spans.append((whitespace_start, whitespace_end or whitespace_start))
+        whitespace_start = None
+        whitespace_end = None
+        normalized_chars.append(char)
+        normalized_spans.append(span)
+
+    return "".join(normalized_chars), normalized_spans
 
 
 def _resume_dict(r: Resume, include_latex_source: bool = True) -> dict:
@@ -1119,8 +1270,10 @@ def _resume_dict(r: Resume, include_latex_source: bool = True) -> dict:
         "redactions": r.redactions, "landed_companies": r.landed_companies or [],
         "anonymized": r.anonymized,
         "review_status": r.review_status, "notes": r.notes,
+        "parent_resume_id": r.parent_resume_id,
         "resolves_comment_id": r.resolves_comment_id,
         "created_at": r.created_at, "open_comment_count": open_count,
+        "aggregate_score": resume_aggregate_score(r),
     }
 
 
@@ -1187,6 +1340,27 @@ def validate_landed_companies(companies: list) -> list[str]:
         if match and match.lower() not in {existing.lower() for existing in normalized}:
             normalized.append(match)
     return normalized
+
+
+def parse_resolves_comment_ids(raw_ids: str, legacy_id: int | None) -> list[int]:
+    ids: list[int] = []
+    if raw_ids:
+        try:
+            parsed = json.loads(raw_ids)
+        except json.JSONDecodeError as exc:
+            raise HTTPException(status_code=400, detail="Invalid resolve comment selection") from exc
+        if not isinstance(parsed, list):
+            raise HTTPException(status_code=400, detail="Resolve comment selection must be a list")
+        for item in parsed:
+            if not isinstance(item, int):
+                raise HTTPException(status_code=400, detail="Resolve comment ids must be numbers")
+            if item not in ids:
+                ids.append(item)
+    if legacy_id and legacy_id not in ids:
+        ids.insert(0, legacy_id)
+    if len(ids) > 50:
+        raise HTTPException(status_code=400, detail="You can resolve at most 50 comments at once")
+    return ids
 
 
 def normalize_landed_company(company: str) -> str:

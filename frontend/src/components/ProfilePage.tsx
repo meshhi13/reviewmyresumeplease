@@ -1,7 +1,7 @@
 import { useState, useCallback, useMemo } from "react";
 import type { ReactElement } from "react";
 import { Link } from "react-router-dom";
-import { FileText, Clock, LogOut, Upload, Eye, EyeOff, MessageSquare, Edit2, Check, X, RotateCcw, Trash2, Briefcase, GitBranch, GitCommit } from "lucide-react";
+import { FileText, Clock, LogOut, Upload, Eye, EyeOff, MessageSquare, Edit2, Check, X, RotateCcw, Trash2, Briefcase, GitBranch, GitCommit, Star } from "lucide-react";
 import { FAANG_PLUS_COMPANIES } from "../constants";
 import type { SavedResume } from "../types";
 
@@ -28,21 +28,18 @@ export function ProfilePage({ user, savedResumes, setSavedResumes, token, apiBas
     const childrenByParent = new Map<number, SavedResume[]>();
     const ids = new Set(savedResumes.map(r => r.id));
     const roots: SavedResume[] = [];
-    const orphans: SavedResume[] = [];
 
     savedResumes.forEach(resume => {
       if (resume.fix_parent_resume_id && ids.has(resume.fix_parent_resume_id)) {
         const children = childrenByParent.get(resume.fix_parent_resume_id) || [];
         children.push(resume);
         childrenByParent.set(resume.fix_parent_resume_id, children);
-      } else if (resume.fix_parent_resume_id) {
-        orphans.push(resume);
-      } else {
+      } else if (!resume.fix_parent_resume_id) {
         roots.push(resume);
       }
     });
 
-    return { roots, orphans, childrenByParent };
+    return { roots, childrenByParent };
   }, [savedResumes]);
 
   const startRename = (r: SavedResume) => {
@@ -218,6 +215,7 @@ export function ProfilePage({ user, savedResumes, setSavedResumes, token, apiBas
         <div className="card-footer">
           <div className="card-badges">
             <span className={`status-badge ${r.review_status.replace(/_/g, "-")}`}>{r.review_status.replace(/_/g, " ")}</span>
+            <span className="resume-score-badge"><Star size={12} />{r.aggregate_score} score</span>
             {r.open_comment_count > 0 && (
               <span className="comment-count-badge"><MessageSquare size={12} />{r.open_comment_count} open</span>
             )}
@@ -270,12 +268,6 @@ export function ProfilePage({ user, savedResumes, setSavedResumes, token, apiBas
       ) : (
         <div className="profile-tree">
           {resumeTree.roots.map(r => renderResumeCard(r))}
-          {resumeTree.orphans.length > 0 && (
-            <div className="profile-tree-orphans">
-              <div className="revision-chip"><GitBranch size={13} />Linked revisions</div>
-              {resumeTree.orphans.map(r => renderResumeCard(r))}
-            </div>
-          )}
         </div>
       )}
     </div>

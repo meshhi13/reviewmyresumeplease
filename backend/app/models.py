@@ -68,6 +68,7 @@ class Resume(Base):
     anonymized: Mapped[bool] = mapped_column(Boolean, default=False)
     review_status: Mapped[str] = mapped_column(String(80), default="ready_for_review")
     notes: Mapped[str] = mapped_column(Text, default="")
+    parent_resume_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     resolves_comment_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 

@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useRef } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import { ArrowLeft, MessageSquare, FileWarning, RotateCcw, Send, Briefcase, GitPullRequest, CheckCircle, Wand2, XCircle, Share2, CheckSquare, Square } from "lucide-react";
+import { ArrowLeft, MessageSquare, FileWarning, RotateCcw, Send, Briefcase, GitPullRequest, CheckCircle, Wand2, Share2, CheckSquare, Square } from "lucide-react";
 import { loadPdfDocument } from "../pdfjs";
 import { PdfPage } from "./PdfPage";
 import type { Comment, Redaction } from "../types";
@@ -27,7 +27,8 @@ function linesToAnchor(lines: SelectedTextLine[]): CommentAnchor | null {
 }
 
 export function ResumeViewer({ currentUserId, token, apiBase }: Props) {
-  const h = () => token ? { Authorization: `Bearer ${token}` } as HeadersInit : {} as HeadersInit;
+  const effectiveToken = token || localStorage.getItem("token") || "";
+  const h = () => effectiveToken ? { Authorization: `Bearer ${effectiveToken}` } as HeadersInit : {} as HeadersInit;
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const resumeId = Number(id);
@@ -51,6 +52,7 @@ export function ResumeViewer({ currentUserId, token, apiBase }: Props) {
   const [landedCompanies, setLandedCompanies] = useState<string[]>([]);
   const [reviewStatus, setReviewStatus] = useState("");
   const [loadError, setLoadError] = useState("");
+  const [commentError, setCommentError] = useState("");
   const [scale, setScale] = useState(1.1);
   const [shareStatus, setShareStatus] = useState("");
   const [selectedResolveIds, setSelectedResolveIds] = useState<number[]>([]);
@@ -62,8 +64,13 @@ export function ResumeViewer({ currentUserId, token, apiBase }: Props) {
 
   useEffect(() => {
     if (!resumeId) return;
+    if (!effectiveToken) {
+      setLoadError("Sign in to review this resume.");
+      return;
+    }
     setPdf(null);
     setLoadError("");
+    setCommentError("");
     setLatexSource("");
     setRedactions([]);
     setComments([]);
@@ -108,9 +115,10 @@ export function ResumeViewer({ currentUserId, token, apiBase }: Props) {
         setComments(data);
         setSelectedResolveIds([]);
       });
-  }, [resumeId, currentUserId, token]);
+  }, [resumeId, currentUserId, effectiveToken]);
 
   const refreshComments = async () => {
+    if (!effectiveToken) return;
     const res = await fetch(`${apiBase}/resumes/${resumeId}/comments`, { headers: h() });
     if (res.ok) {
       const data: Comment[] = await res.json();
@@ -127,6 +135,7 @@ export function ResumeViewer({ currentUserId, token, apiBase }: Props) {
     setVisibleTextSuggestion(text ? { original: text } : null);
     setVisibleSuggestionReplacement(text);
     setDraftAnchor(linesToAnchor(sorted));
+    setCommentError("");
     if (sorted.length > 0) setTimeout(() => textareaRef.current?.focus(), 50);
   };
 
@@ -137,6 +146,7 @@ export function ResumeViewer({ currentUserId, token, apiBase }: Props) {
     setVisibleSuggestionReplacement("");
     setSelectedTextLines([]);
     setCommentKind("comment");
+    setCommentError("");
   };
 
   const useSuggestionForDraft = () => {
@@ -155,6 +165,10 @@ export function ResumeViewer({ currentUserId, token, apiBase }: Props) {
 
   const submitComment = async () => {
     if (!draftAnchor || !draftBody.trim()) return;
+    if (!effectiveToken) {
+      setCommentError("Please sign in again before posting a comment.");
+      return;
+    }
     const replacement = visibleSuggestionReplacement.trim();
     const includeSuggestion = commentKind === "suggestion" && visibleTextSuggestion && replacement && replacement !== visibleTextSuggestion.original;
     const res = await fetch(`${apiBase}/resumes/${resumeId}/comments`, {
@@ -172,6 +186,9 @@ export function ResumeViewer({ currentUserId, token, apiBase }: Props) {
     if (res.ok) {
       clearDraft();
       await refreshComments();
+    } else {
+      const error = await res.json().catch(() => null);
+      setCommentError(formatApiError(error?.detail ?? "Could not post this suggestion."));
     }
   };
 
@@ -206,22 +223,20 @@ export function ResumeViewer({ currentUserId, token, apiBase }: Props) {
     window.setTimeout(() => setShareStatus(""), 2200);
   };
 
-  const updateSuggestion = async (commentId: number, action: "apply" | "reject") => {
-    const res = await fetch(`${apiBase}/resumes/${resumeId}/comments/${commentId}/suggestion/${action}`, {
+  const applySuggestion = async (commentId: number) => {
+    const res = await fetch(`${apiBase}/resumes/${resumeId}/comments/${commentId}/suggestion/apply`, {
       method: "PATCH", headers: h(),
     });
     if (res.ok) {
       const updated = await res.json();
       setComments(c => c.map(x => x.id === commentId ? updated : x));
-      if (action === "apply") {
-        const meta = await fetch(`${apiBase}/resumes/${resumeId}`, { headers: h() });
-        if (meta.ok) {
-          const next = await meta.json();
-          setLatexSource(next.latex_source || "");
-        }
-        const pdfRes = await fetch(`${apiBase}/resumes/${resumeId}/file`, { headers: h() });
-        if (pdfRes.ok) setPdf(await loadPdfDocument(await pdfRes.arrayBuffer()));
+      const meta = await fetch(`${apiBase}/resumes/${resumeId}`, { headers: h() });
+      if (meta.ok) {
+        const next = await meta.json();
+        setLatexSource(next.latex_source || "");
       }
+      const pdfRes = await fetch(`${apiBase}/resumes/${resumeId}/file`, { headers: h() });
+      if (pdfRes.ok) setPdf(await loadPdfDocument(await pdfRes.arrayBuffer()));
     }
   };
 
@@ -267,6 +282,7 @@ export function ResumeViewer({ currentUserId, token, apiBase }: Props) {
   );
   const visibleComments = comments.filter(c => c.status === (tab === "open" ? "open" : "resolved"));
   const resolvableVisibleComments = visibleComments.filter(canResolveComment);
+  const selectedResolveComments = comments.filter(c => selectedResolveIds.includes(c.id));
   const allResolvableSelected = resolvableVisibleComments.length > 0 && resolvableVisibleComments.every(c => selectedResolveIds.includes(c.id));
   const openCount = comments.filter(c => c.status === "open").length;
   const resolvedCount = comments.filter(c => c.status === "resolved").length;
@@ -284,6 +300,12 @@ export function ResumeViewer({ currentUserId, token, apiBase }: Props) {
       setSelectedResolveIds(ids => Array.from(new Set([...ids, ...resolvableVisibleComments.map(c => c.id)])));
     }
   };
+
+  function formatApiError(detail: unknown) {
+    if (typeof detail === "string") return detail;
+    if (Array.isArray(detail)) return detail.map((item: any) => item?.msg || item?.message || String(item)).join(" ");
+    return "Could not post this suggestion.";
+  }
 
   return (
     <div className="viewer-layout">
@@ -375,13 +397,31 @@ export function ResumeViewer({ currentUserId, token, apiBase }: Props) {
           </div>
           {resolvableVisibleComments.length > 0 && (
             <div className="bulk-resolve-bar">
-              <button className="text-btn bulk-select-btn" onClick={toggleAllResolvable}>
-                {allResolvableSelected ? <CheckSquare size={14} /> : <Square size={14} />}
-                {allResolvableSelected ? "Clear" : "Select ready"}
-              </button>
-              <button className="primary-button" disabled={selectedResolveIds.length === 0} onClick={resolveSelectedComments}>
-                <CheckCircle size={14} /> Resolve {selectedResolveIds.length || ""}
-              </button>
+              <div className="bulk-resolve-actions">
+                <button className="text-btn bulk-select-btn" onClick={toggleAllResolvable}>
+                  {allResolvableSelected ? <CheckSquare size={14} /> : <Square size={14} />}
+                  {allResolvableSelected ? "Clear" : "Select ready"}
+                </button>
+                <button className="primary-button" disabled={selectedResolveIds.length === 0} onClick={resolveSelectedComments}>
+                  <CheckCircle size={14} /> Resolve {selectedResolveIds.length || ""}
+                </button>
+              </div>
+              {selectedResolveComments.length > 0 && (
+                <div className="bulk-resolve-preview">
+                  {selectedResolveComments.map(comment => (
+                    <div key={comment.id} className="bulk-resolve-preview-item">
+                      <strong>Issue #{comment.id}</strong>
+                      <span>{comment.body}</span>
+                      {comment.suggestion_status !== "none" && (
+                        <div className="bulk-resolve-suggestion">
+                          <pre className="suggestion-original">{comment.suggestion_original}</pre>
+                          <pre className="suggestion-replacement">{comment.suggestion_replacement}</pre>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -427,8 +467,7 @@ export function ResumeViewer({ currentUserId, token, apiBase }: Props) {
                     </div>
                     {isOwner && c.suggestion_status === "pending" && (
                       <div className="suggestion-actions">
-                        <button className="secondary-button" onClick={() => updateSuggestion(c.id, "reject")}><XCircle size={13} /> Reject</button>
-                        <button className="primary-button" onClick={() => updateSuggestion(c.id, "apply")}><CheckCircle size={13} /> Apply</button>
+                        <button className="primary-button" onClick={() => applySuggestion(c.id)}><CheckCircle size={13} /> Apply fix</button>
                       </div>
                     )}
                   </div>
@@ -555,6 +594,7 @@ export function ResumeViewer({ currentUserId, token, apiBase }: Props) {
                   rows={3}
                   maxLength={2000}
                 />
+                {commentError && <p className="comment-submit-error" role="alert">{commentError}</p>}
                 <div style={{ display: "flex", gap: 8 }}>
                   <button className="secondary-button" onClick={clearDraft} style={{ flex: 1 }}>Cancel</button>
                   <button
