@@ -73,7 +73,8 @@ services:
       - "3000:3000"
     volumes:
       - grafana_data:/var/lib/grafana
-    restart: unless-stopped
+      - ./grafana/provisioning/dashboards/dashboard.yaml:/etc/grafana/provisioning/dashboards/main.yaml
+      - ./grafana/dashboards:/etc/grafana/provisioning/dashboards/filesrestart: unless-stopped
     networks:
       - app-network
 
