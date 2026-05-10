@@ -1,7 +1,38 @@
 from datetime import datetime
 from typing import Any
+import re
 
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, field_validator
+
+
+USERNAME_RE = re.compile(r"^[A-Za-z0-9_-]{3,30}$")
+
+
+def clean_text(value: str) -> str:
+    return re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", "", value).strip()
+
+
+def validate_strong_password(value: str) -> str:
+    if len(value) < 12:
+        raise ValueError("Password must be at least 12 characters.")
+    if not re.search(r"[A-Z]", value):
+        raise ValueError("Password must include an uppercase letter.")
+    if not re.search(r"[a-z]", value):
+        raise ValueError("Password must include a lowercase letter.")
+    if not re.search(r"\d", value):
+        raise ValueError("Password must include a number.")
+    if not re.search(r"[^A-Za-z0-9]", value):
+        raise ValueError("Password must include a symbol.")
+    return value
+
+
+def validate_username(value: str | None) -> str | None:
+    if value is None:
+        return None
+    username = clean_text(value)
+    if not USERNAME_RE.fullmatch(username):
+        raise ValueError("Username must be 3-30 characters and use only letters, numbers, underscores, or hyphens.")
+    return username
 
 
 class SignInRequest(BaseModel):
@@ -15,16 +46,30 @@ class ForgotPasswordRequest(BaseModel):
 
 class ForgotPasswordResponse(BaseModel):
     message: str
-    reset_token: str | None = None
 
 
 class ResetPasswordRequest(BaseModel):
     reset_token: str = Field(min_length=1, max_length=500)
-    password: str = Field(min_length=8, max_length=128)
+    password: str = Field(min_length=12, max_length=128)
+
+    @field_validator("password")
+    @classmethod
+    def password_is_strong(cls, value: str) -> str:
+        return validate_strong_password(value)
 
 
 class CreateAccountRequest(SignInRequest):
-    display_name: str | None = Field(default=None, max_length=120)
+    display_name: str | None = Field(default=None, max_length=30)
+
+    @field_validator("password")
+    @classmethod
+    def password_is_strong(cls, value: str) -> str:
+        return validate_strong_password(value)
+
+    @field_validator("display_name")
+    @classmethod
+    def username_is_valid(cls, value: str | None) -> str | None:
+        return validate_username(value)
 
 
 class UserResponse(BaseModel):
@@ -43,6 +88,11 @@ class AuthResponse(BaseModel):
 class ReviewCreateRequest(BaseModel):
     rating: int = Field(ge=1, le=5)
     feedback: str = Field(min_length=1, max_length=2000)
+
+    @field_validator("feedback")
+    @classmethod
+    def feedback_is_clean(cls, value: str) -> str:
+        return clean_text(value)
 
 
 class ReviewResponse(BaseModel):
@@ -69,9 +119,19 @@ class CommentCreateRequest(BaseModel):
     suggestion_original: str | None = Field(default=None, max_length=20_000)
     suggestion_replacement: str | None = Field(default=None, max_length=20_000)
 
+    @field_validator("body", "suggestion_original", "suggestion_replacement")
+    @classmethod
+    def text_is_clean(cls, value: str | None) -> str | None:
+        return clean_text(value) if value is not None else value
+
 
 class CommentReplyCreateRequest(BaseModel):
     body: str = Field(min_length=1, max_length=2000)
+
+    @field_validator("body")
+    @classmethod
+    def body_is_clean(cls, value: str) -> str:
+        return clean_text(value)
 
 
 class CommentReplyResponse(BaseModel):
@@ -99,6 +159,11 @@ class LatexCompileRequest(BaseModel):
 
 class ResumeLatexSourceRequest(LatexCompileRequest):
     title: str | None = Field(default=None, max_length=255)
+
+    @field_validator("title")
+    @classmethod
+    def title_is_clean(cls, value: str | None) -> str | None:
+        return clean_text(value) if value is not None else value
 
 
 class CommentResponse(BaseModel):
@@ -133,6 +198,11 @@ class CommentResponse(BaseModel):
 
 class ResumeTitleRequest(BaseModel):
     title: str = Field(min_length=1, max_length=255)
+
+    @field_validator("title")
+    @classmethod
+    def title_is_clean(cls, value: str) -> str:
+        return clean_text(value)
 
 
 class ResumeLandedCompaniesRequest(BaseModel):

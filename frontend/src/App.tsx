@@ -51,6 +51,7 @@ Python, TypeScript, React, FastAPI, SQL, Docker
 type User = { id: number; email: string; display_name: string };
 type AuthResponse = { user: User; token: string };
 type AuthMode = "sign-in" | "create-account" | "forgot-password" | "reset-password";
+type AuthPopup = { kind: "error" | "success"; message: string };
 type EditorViewMode = "source" | "split" | "preview";
 
 
@@ -73,6 +74,7 @@ function App() {
   const [savedResumes, setSavedResumes] = useState<SavedResume[]>([]);
   const [scale, setScale] = useState(1.25);
   const [status, setStatus] = useState("Sign in to upload and save resumes.");
+  const [authPopup, setAuthPopup] = useState<AuthPopup | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [notes, setNotes] = useState("");
   const [anonymizeResume, setAnonymizeResume] = useState(false);
@@ -102,6 +104,21 @@ function App() {
         .catch(() => { localStorage.removeItem("token"); navigate("/auth"); });
     } else { navigate("/auth"); }
   }, [navigate]);
+
+  useEffect(() => {
+    if (location.pathname !== "/auth") return;
+    const params = new URLSearchParams(location.search);
+    const token = params.get("reset_token");
+    if (!token) return;
+    setResetToken(token);
+    setAuthMode("reset-password");
+    setPassword("");
+    setConfirmPassword("");
+    setEmail("");
+    setStatus("Choose a new password.");
+    setAuthPopup(null);
+    navigate("/auth", { replace: true });
+  }, [location.pathname, location.search, navigate]);
 
   useEffect(() => { if (user && authToken) loadSavedResumes(user.id); }, [user, authToken]);
 
@@ -183,6 +200,7 @@ function App() {
 
   async function handleSignIn(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
+    setAuthPopup(null);
     if (authMode === "forgot-password") {
       const res = await fetch(`${API}/auth/forgot-password`, {
         method: "POST",
@@ -190,39 +208,53 @@ function App() {
         body: JSON.stringify({ email }),
       });
       const payload = await res.json().catch(() => null);
-      if (!res.ok) { setStatus(payload?.detail ?? "Could not start password reset."); return; }
+      if (!res.ok) { showAuthError(payload?.detail ?? "Could not start password reset."); return; }
       setPassword(""); setConfirmPassword("");
-      if (payload?.reset_token) {
-        setResetToken(payload.reset_token);
-        setAuthMode("reset-password");
-        setStatus("Reset link verified. Choose a new password.");
-      } else {
-        setStatus("If that account exists, a reset link is ready.");
-      }
+      showAuthSuccess(payload?.message ?? "If that account exists, a reset link has been sent.");
       return;
     }
     if (authMode === "reset-password") {
-      if (password !== confirmPassword) { setStatus("Passwords do not match."); return; }
+      if (password !== confirmPassword) { showAuthError("Passwords do not match."); return; }
       const res = await fetch(`${API}/auth/reset-password`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ reset_token: resetToken, password }),
       });
       const payload = await res.json().catch(() => null);
-      if (!res.ok) { setStatus(payload?.detail ?? "Could not reset password."); return; }
+      if (!res.ok) { showAuthError(payload?.detail ?? "Could not reset password."); return; }
       const auth = payload as AuthResponse;
       setUser(auth.user); setAuthToken(auth.token); localStorage.setItem("token", auth.token);
       setPassword(""); setConfirmPassword(""); setResetToken(""); navigate("/");
       return;
     }
-    if (authMode === "create-account" && password !== confirmPassword) { setStatus("Passwords do not match."); return; }
+    if (authMode === "create-account" && password !== confirmPassword) { showAuthError("Passwords do not match."); return; }
+    if (authMode === "create-account" && /\s/.test(displayName)) { showAuthError("Username cannot contain spaces."); return; }
     const endpoint = authMode === "sign-in" ? "sign-in" : "create-account";
     const body = authMode === "sign-in" ? { email, password } : { email, password, display_name: displayName };
     const res = await fetch(`${API}/auth/${endpoint}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
-    if (!res.ok) { const err = await res.json().catch(() => null); setStatus(err?.detail ?? "Could not sign in."); return; }
+    if (!res.ok) { const err = await res.json().catch(() => null); showAuthError(err?.detail ?? "Could not sign in."); return; }
     const auth = (await res.json()) as AuthResponse;
     setUser(auth.user); setAuthToken(auth.token); localStorage.setItem("token", auth.token);
     setConfirmPassword(""); navigate("/");
+  }
+
+  function showAuthError(detail: unknown) {
+    const message = formatApiError(detail);
+    setAuthPopup({ kind: "error", message });
+    setStatus(message);
+  }
+
+  function showAuthSuccess(message: string) {
+    setAuthPopup({ kind: "success", message });
+    setStatus(message);
+  }
+
+  function formatApiError(detail: unknown) {
+    if (typeof detail === "string") return detail;
+    if (Array.isArray(detail)) {
+      return detail.map((item: any) => item?.msg || item?.message || String(item)).join(" ");
+    }
+    return "Something went wrong. Please try again.";
   }
 
   async function handleUpload(e: ChangeEvent<HTMLInputElement>) {
@@ -337,28 +369,50 @@ function App() {
           <p className="auth-subtitle">{authTitle}</p>
         </div>
         <div className="auth-tabs">
-          <button className={authMode === "sign-in" ? "selected" : ""} type="button" onClick={() => setAuthMode("sign-in")}>Sign In</button>
-          <button className={authMode === "create-account" ? "selected" : ""} type="button" onClick={() => setAuthMode("create-account")}>Register</button>
+          <button className={authMode === "sign-in" ? "selected" : ""} type="button" onClick={() => { setAuthPopup(null); setAuthMode("sign-in"); }}>Sign In</button>
+          <button className={authMode === "create-account" ? "selected" : ""} type="button" onClick={() => { setAuthPopup(null); setAuthMode("create-account"); }}>Register</button>
         </div>
-        {authMode === "create-account" && (
-          <label><span>User Name <span title="Use a pseudonym or nickname to stay anonymous." style={{ cursor: "help", color: "var(--accent)" }}>ⓘ</span></span>
-            <input autoComplete="name" maxLength={50} onChange={e => setDisplayName(e.target.value)} placeholder="Ada Lovelace" value={displayName} /></label>
+        {authPopup && (
+          <div className={`auth-error-popup ${authPopup.kind}`} role={authPopup.kind === "error" ? "alert" : "status"}>
+            <strong>{authPopup.kind === "error" ? "Check this" : "Email sent"}</strong>
+            <span>{authPopup.message}</span>
+            <button type="button" aria-label="Dismiss message" onClick={() => setAuthPopup(null)}>×</button>
+          </div>
         )}
-        <label><span>Email</span><input autoComplete="email" maxLength={100} onChange={e => setEmail(e.target.value)} placeholder="you@example.com" required type="email" value={email} /></label>
+        {authMode === "create-account" && (
+          <label><span>Username</span>
+            <input
+              autoComplete="username"
+              maxLength={30}
+              minLength={3}
+              onChange={e => setDisplayName(e.target.value.replace(/\s+/g, ""))}
+              pattern="[A-Za-z0-9_-]{3,30}"
+              placeholder="Ada_Lovelace"
+              required
+              value={displayName}
+            /></label>
+        )}
+        {authMode === "reset-password" ? (
+          <div className="auth-reset-note">
+            This reset applies to the account tied to the link in your email.
+          </div>
+        ) : (
+          <label><span>Email</span><input autoComplete="email" maxLength={100} onChange={e => setEmail(e.target.value)} placeholder="you@example.com" required type="email" value={email} /></label>
+        )}
         {authMode !== "forgot-password" && (
-          <label><span>{authMode === "reset-password" ? "New Password" : "Password"}</span><input autoComplete={authMode === "sign-in" ? "current-password" : "new-password"} minLength={8} maxLength={128} onChange={e => setPassword(e.target.value)} placeholder="At least 8 characters" required type="password" value={password} /></label>
+          <label><span>{authMode === "reset-password" ? "New Password" : "Password"}</span><input autoComplete={authMode === "sign-in" ? "current-password" : "new-password"} minLength={authMode === "sign-in" ? 8 : 12} maxLength={128} onChange={e => setPassword(e.target.value)} placeholder={authMode === "sign-in" ? "Your password" : "12+ chars, upper, lower, number, symbol"} required type="password" value={password} /></label>
         )}
         {(authMode === "create-account" || authMode === "reset-password") && (
-          <label><span>Confirm Password</span><input autoComplete="new-password" minLength={8} maxLength={128} onChange={e => setConfirmPassword(e.target.value)} placeholder="Repeat your password" required type="password" value={confirmPassword} /></label>
+          <label><span>Confirm Password</span><input autoComplete="new-password" minLength={12} maxLength={128} onChange={e => setConfirmPassword(e.target.value)} placeholder="Repeat your password" required type="password" value={confirmPassword} /></label>
         )}
         <button className="primary-button" type="submit">{authMode === "reset-password" ? <KeyRound size={16} /> : <Mail size={16} />}{authSubmitText}</button>
         {authMode === "sign-in" && (
-          <button className="text-btn auth-link" type="button" onClick={() => { setAuthMode("forgot-password"); setPassword(""); setConfirmPassword(""); setStatus("Enter your account email to reset your password."); }}>
+          <button className="text-btn auth-link" type="button" onClick={() => { setAuthPopup(null); setAuthMode("forgot-password"); setPassword(""); setConfirmPassword(""); setStatus("Enter your account email to reset your password."); }}>
             Forgot password?
           </button>
         )}
         {(authMode === "forgot-password" || authMode === "reset-password") && (
-          <button className="text-btn auth-link" type="button" onClick={() => { setAuthMode("sign-in"); setPassword(""); setConfirmPassword(""); setResetToken(""); setStatus("Sign in to upload and save resumes."); }}>
+          <button className="text-btn auth-link" type="button" onClick={() => { setAuthPopup(null); setAuthMode("sign-in"); setPassword(""); setConfirmPassword(""); setResetToken(""); setStatus("Sign in to upload and save resumes."); }}>
             Back to sign in
           </button>
         )}

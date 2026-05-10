@@ -1,6 +1,8 @@
 from datetime import datetime, timezone
 from typing import Annotated
 import base64
+from collections import defaultdict, deque
+from email.message import EmailMessage
 import secrets
 import hashlib
 import hmac
@@ -8,19 +10,22 @@ import json
 import os
 import re
 import shutil
+import smtplib
+import ssl
 import subprocess
 import tempfile
+import time
 
-from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from prometheus_fastapi_instrumentator import Instrumentator
-from fastapi.responses import Response
+from fastapi.responses import JSONResponse, Response
 from sqlalchemy import select, text, func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
 from .database import Base, engine, get_db
-from .models import Comment, Resume, SessionToken, User, Review, CommentReply, CommentVote, Notification
+from .models import Comment, Resume, SessionToken, User, Review, CommentReply, CommentVote, Notification, PasswordResetToken
 from .schemas import (
     AuthResponse,
     BrowseResumeResponse,
@@ -43,10 +48,18 @@ from .schemas import (
     CommentVoteRequest,
     LatexCompileRequest,
     ResumeLatexSourceRequest,
+    clean_text,
 )
 
 app = FastAPI(title="Resume Review Platform API")
 Instrumentator().instrument(app).expose(app)
+
+RATE_LIMIT_BUCKETS: dict[str, deque[float]] = defaultdict(deque)
+RATE_LIMITS = {
+    "auth": (60, 60),
+    "write": (90, 60),
+    "default": (240, 60),
+}
 
 FAANG_PLUS_COMPANIES = [
     "Meta",
@@ -81,6 +94,29 @@ app.add_middleware(
 )
 
 
+@app.middleware("http")
+async def rate_limit_requests(request: Request, call_next):
+    client = request.client.host if request.client else "unknown"
+    path = request.url.path
+    if path in {"/health", "/metrics"}:
+        return await call_next(request)
+    bucket_name = "auth" if path.startswith("/auth/") else "write" if request.method in {"POST", "PATCH", "DELETE"} else "default"
+    limit, window = RATE_LIMITS[bucket_name]
+    key = f"{bucket_name}:{client}"
+    now = time.monotonic()
+    bucket = RATE_LIMIT_BUCKETS[key]
+    while bucket and now - bucket[0] > window:
+        bucket.popleft()
+    if len(bucket) >= limit:
+        return JSONResponse(
+            status_code=429,
+            content={"detail": "Too many requests. Please wait a moment and try again."},
+            headers={"Retry-After": str(window)},
+        )
+    bucket.append(now)
+    return await call_next(request)
+
+
 @app.on_event("startup")
 def on_startup() -> None:
     try:
@@ -90,6 +126,7 @@ def on_startup() -> None:
         pass
     with engine.begin() as connection:
         connection.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS password_hash VARCHAR(255)"))
+        connection.execute(text("ALTER TABLE users ALTER COLUMN display_name TYPE VARCHAR(120)"))
         connection.execute(text("ALTER TABLE resumes ADD COLUMN IF NOT EXISTS title VARCHAR(255)"))
         connection.execute(text("ALTER TABLE resumes ADD COLUMN IF NOT EXISTS source_format VARCHAR(40) NOT NULL DEFAULT 'pdf'"))
         connection.execute(text("ALTER TABLE resumes ADD COLUMN IF NOT EXISTS latex_source TEXT NOT NULL DEFAULT ''"))
@@ -102,6 +139,21 @@ def on_startup() -> None:
         connection.execute(text("ALTER TABLE comments ADD COLUMN IF NOT EXISTS suggestion_replacement TEXT NOT NULL DEFAULT ''"))
         connection.execute(text("ALTER TABLE comments ADD COLUMN IF NOT EXISTS suggestion_status VARCHAR(20) NOT NULL DEFAULT 'none'"))
         connection.execute(text("ALTER TABLE notifications ADD COLUMN IF NOT EXISTS actor_id INTEGER"))
+        connection.execute(text(
+            """
+            CREATE TABLE IF NOT EXISTS password_reset_tokens (
+                id SERIAL PRIMARY KEY,
+                user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                token_hash VARCHAR(64) NOT NULL UNIQUE,
+                expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
+                used_at TIMESTAMP WITH TIME ZONE,
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT now()
+            )
+            """
+        ))
+        connection.execute(text("CREATE INDEX IF NOT EXISTS ix_password_reset_tokens_user_id ON password_reset_tokens(user_id)"))
+        connection.execute(text("CREATE INDEX IF NOT EXISTS ix_password_reset_tokens_token_hash ON password_reset_tokens(token_hash)"))
+        connection.execute(text("CREATE INDEX IF NOT EXISTS ix_password_reset_tokens_expires_at ON password_reset_tokens(expires_at)"))
 
 
 @app.get("/health")
@@ -119,7 +171,7 @@ def list_faang_plus_companies() -> dict[str, list[str]]:
 @app.post("/auth/create-account", response_model=AuthResponse)
 def create_account(payload: CreateAccountRequest, db: Annotated[Session, Depends(get_db)]) -> dict:
     email = payload.email.lower().strip()
-    display_name = (payload.display_name or "").strip() or name_from_email(email)
+    display_name = payload.display_name or name_from_email(email)
     user = db.scalar(select(User).where(User.email == email))
 
     if user and user.password_hash:
@@ -153,19 +205,33 @@ def sign_in(payload: SignInRequest, db: Annotated[Session, Depends(get_db)]) -> 
 def forgot_password(payload: ForgotPasswordRequest, db: Annotated[Session, Depends(get_db)]) -> dict:
     email = payload.email.lower().strip()
     user = db.scalar(select(User).where(User.email == email))
-    response = {"message": "If an account exists, a reset link is ready."}
+    response = {"message": "If an account exists, a reset link has been sent."}
     if user and user.password_hash:
-        response["reset_token"] = create_password_reset_token(email)
+        raw_token = create_password_reset_token(user, db)
+        try:
+            send_password_reset_email(user.email, raw_token)
+        except Exception as exc:
+            db.query(PasswordResetToken).filter(
+                PasswordResetToken.token_hash == hash_reset_token(raw_token),
+                PasswordResetToken.used_at.is_(None),
+            ).update({"used_at": datetime.now(timezone.utc)})
+            db.commit()
+            raise HTTPException(
+                status_code=502,
+                detail="Could not send reset email. Please check SMTP settings and try again.",
+            ) from exc
     return response
 
 
 @app.post("/auth/reset-password", response_model=AuthResponse)
 def reset_password(payload: ResetPasswordRequest, db: Annotated[Session, Depends(get_db)]) -> dict:
-    email = verify_password_reset_token(payload.reset_token)
-    user = db.scalar(select(User).where(User.email == email))
+    reset_token = verify_password_reset_token(payload.reset_token, db)
+    user = db.get(User, reset_token.user_id)
     if not user:
         raise HTTPException(status_code=400, detail="Invalid or expired reset link")
     user.password_hash = hash_password(payload.password)
+    reset_token.used_at = datetime.now(timezone.utc)
+    db.query(SessionToken).filter(SessionToken.user_id == user.id).delete()
     db.commit()
     db.refresh(user)
     return create_session_response(user, db)
@@ -381,6 +447,8 @@ async def save_resume(
         raise HTTPException(status_code=400, detail="Landed companies must be a list")
     validated_companies = validate_landed_companies(parsed_companies)
 
+    title = clean_text(title)
+    notes = clean_text(notes)
     source = latex_source.strip()
     source_format = "latex" if source else "pdf"
     file_name = "resume.pdf"
@@ -388,7 +456,7 @@ async def save_resume(
 
     if source:
         pdf_data = compile_latex_to_pdf(source)
-        file_name = f"{(title.strip() or 'resume')}.pdf"
+        file_name = f"{(title or 'resume')}.pdf"
     elif file:
         raw_file = await file.read()
         if file.filename and file.filename.lower().endswith(".tex"):
@@ -406,7 +474,7 @@ async def save_resume(
 
     resume = Resume(
         user_id=current_user.id,
-        title=title.strip() or None,
+        title=title or None,
         file_name=file_name,
         content_type=content_type,
         pdf_data=pdf_data,
@@ -415,7 +483,7 @@ async def save_resume(
         redactions=parsed_redactions,
         landed_companies=validated_companies,
         anonymized=anonymized,
-        notes=notes.strip(),
+        notes=notes,
         resolves_comment_id=resolves_comment_id,
     )
     db.add(resume)
@@ -516,7 +584,7 @@ def update_resume_title(
         raise HTTPException(status_code=404, detail="Resume not found")
     if resume.user_id != current_user.id:
         raise HTTPException(status_code=403, detail="You can only rename your own resumes")
-    resume.title = payload.title.strip()
+    resume.title = payload.title
     db.commit()
     return {"id": resume.id, "title": resume.title}
 
@@ -540,7 +608,7 @@ def update_resume_latex_source(
     resume.pdf_data = compile_latex_to_pdf(resume.latex_source)
     resume.content_type = "application/pdf"
     if payload.title is not None:
-        resume.title = payload.title.strip() or resume.title
+        resume.title = payload.title or resume.title
     db.commit()
     db.refresh(resume)
     return _resume_dict(resume)
@@ -1199,45 +1267,105 @@ def _comment_dict(
 
 
 def hash_password(password: str) -> str:
-    iterations = 210_000
+    n = 2**14
+    r = 8
+    p = 1
     salt = secrets.token_hex(16)
-    digest = hashlib.pbkdf2_hmac("sha256", password.encode(), salt.encode(), iterations)
-    return f"pbkdf2_sha256${iterations}${salt}${digest.hex()}"
+    digest = hashlib.scrypt(password.encode(), salt=salt.encode(), n=n, r=r, p=p, dklen=64)
+    return f"scrypt${n}${r}${p}${salt}${digest.hex()}"
 
 
 def verify_password(password: str, stored_hash: str) -> bool:
     try:
-        algorithm, iterations, salt, expected = stored_hash.split("$", 3)
+        parts = stored_hash.split("$")
     except ValueError:
         return False
-    if algorithm != "pbkdf2_sha256":
+    if not parts:
         return False
-    digest = hashlib.pbkdf2_hmac("sha256", password.encode(), salt.encode(), int(iterations))
-    return hmac.compare_digest(digest.hex(), expected)
+    if parts[0] == "scrypt" and len(parts) == 6:
+        _, n, r, p, salt, expected = parts
+        digest = hashlib.scrypt(password.encode(), salt=salt.encode(), n=int(n), r=int(r), p=int(p), dklen=64)
+        return hmac.compare_digest(digest.hex(), expected)
+    if parts[0] == "pbkdf2_sha256" and len(parts) == 4:
+        _, iterations, salt, expected = parts
+        digest = hashlib.pbkdf2_hmac("sha256", password.encode(), salt.encode(), int(iterations))
+        return hmac.compare_digest(digest.hex(), expected)
+    return False
 
 
-def create_password_reset_token(email: str) -> str:
-    expires_at = int(datetime.now(timezone.utc).timestamp()) + 3600
-    payload = f"{email}|{expires_at}|{secrets.token_urlsafe(12)}"
-    payload_token = base64.urlsafe_b64encode(payload.encode()).decode().rstrip("=")
-    signature = hmac.new(password_reset_secret().encode(), payload_token.encode(), hashlib.sha256).hexdigest()
-    return f"{payload_token}.{signature}"
+def create_password_reset_token(user: User, db: Session) -> str:
+    raw_token = secrets.token_urlsafe(48)
+    token_hash = hash_reset_token(raw_token)
+    now = datetime.now(timezone.utc)
+    db.query(PasswordResetToken).filter(
+        PasswordResetToken.user_id == user.id,
+        PasswordResetToken.used_at.is_(None),
+        PasswordResetToken.expires_at > now,
+    ).update({"used_at": now})
+    db.add(PasswordResetToken(
+        user_id=user.id,
+        token_hash=token_hash,
+        expires_at=datetime.fromtimestamp(time.time() + password_reset_ttl_seconds(), tz=timezone.utc),
+    ))
+    db.commit()
+    return raw_token
 
 
-def verify_password_reset_token(token: str) -> str:
-    try:
-        payload_token, signature = token.split(".", 1)
-        expected_signature = hmac.new(password_reset_secret().encode(), payload_token.encode(), hashlib.sha256).hexdigest()
-        if not hmac.compare_digest(signature, expected_signature):
-            raise ValueError
-        padding = "=" * (-len(payload_token) % 4)
-        payload = base64.urlsafe_b64decode(f"{payload_token}{padding}").decode()
-        email, expires_at, _nonce = payload.split("|", 2)
-    except (ValueError, UnicodeDecodeError):
+def verify_password_reset_token(token: str, db: Session) -> PasswordResetToken:
+    token_hash = hash_reset_token(token.strip())
+    reset_token = db.scalar(select(PasswordResetToken).where(PasswordResetToken.token_hash == token_hash))
+    now = datetime.now(timezone.utc)
+    if not reset_token or reset_token.used_at is not None or reset_token.expires_at < now:
         raise HTTPException(status_code=400, detail="Invalid or expired reset link")
-    if int(expires_at) < int(datetime.now(timezone.utc).timestamp()):
-        raise HTTPException(status_code=400, detail="Invalid or expired reset link")
-    return email.lower().strip()
+    return reset_token
+
+
+def hash_reset_token(token: str) -> str:
+    return hashlib.sha256(f"{password_reset_secret()}:{token}".encode()).hexdigest()
+
+
+def password_reset_ttl_seconds() -> int:
+    return int(os.getenv("PASSWORD_RESET_TTL_SECONDS", "3600"))
+
+
+def send_password_reset_email(email: str, token: str) -> None:
+    reset_url = f"{frontend_base_url().rstrip('/')}/auth?reset_token={token}"
+    subject = "Reset your reviewmyresumeplease password"
+    body = (
+        "You requested a password reset for reviewmyresumeplease.\n\n"
+        f"Use this link within {password_reset_ttl_seconds() // 60} minutes:\n{reset_url}\n\n"
+        "If you did not request this, you can ignore this email."
+    )
+    smtp_host = os.getenv("SMTP_HOST", "").strip()
+    if not smtp_host:
+        print(f"[password-reset] SMTP_HOST not configured. Reset link for {email}: {reset_url}", flush=True)
+        return
+    message = EmailMessage()
+    message["Subject"] = subject
+    message["From"] = os.getenv("SMTP_FROM", os.getenv("SMTP_USERNAME", "no-reply@localhost"))
+    message["To"] = email
+    message.set_content(body)
+    port = int(os.getenv("SMTP_PORT", "587"))
+    username = os.getenv("SMTP_USERNAME", "")
+    password = os.getenv("SMTP_PASSWORD", "")
+    use_tls = os.getenv("SMTP_USE_TLS", "true").lower() != "false"
+    if use_tls:
+        with smtplib.SMTP(smtp_host, port, timeout=10) as smtp:
+            smtp.starttls(context=ssl.create_default_context())
+            if username:
+                smtp.login(username, password)
+            smtp.send_message(message)
+    else:
+        with smtplib.SMTP_SSL(smtp_host, port, timeout=10) as smtp:
+            if username:
+                smtp.login(username, password)
+            smtp.send_message(message)
+
+
+def frontend_base_url() -> str:
+    if os.getenv("FRONTEND_BASE_URL"):
+        return os.environ["FRONTEND_BASE_URL"]
+    return allowed_origins[0] if allowed_origins else "http://localhost:5173"
 
 
 def password_reset_secret() -> str:
@@ -1245,4 +1373,7 @@ def password_reset_secret() -> str:
 
 
 def name_from_email(email: str) -> str:
-    return email.split("@")[0].replace(".", " ").replace("_", " ").title()
+    username = re.sub(r"[^A-Za-z0-9_-]", "_", email.split("@")[0]).strip("_")
+    if len(username) < 3:
+        username = f"user_{username or secrets.token_hex(2)}"
+    return username[:30]

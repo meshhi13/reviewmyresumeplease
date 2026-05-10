@@ -212,6 +212,60 @@ h4 {
   color: #FFFFFF;
 }
 
+.auth-error-popup {
+  align-items: flex-start;
+  background: #fff1ee;
+  border: 1px solid rgba(192, 57, 43, 0.28);
+  border-radius: 10px;
+  color: #5d2019;
+  display: grid;
+  gap: 4px 10px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  padding: 12px;
+}
+
+.auth-error-popup.success {
+  background: #eefaf4;
+  border-color: rgba(16, 135, 84, 0.28);
+  color: #124f35;
+}
+
+.auth-error-popup strong {
+  color: #8a2b20;
+  font-size: 0.78rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.auth-error-popup.success strong,
+.auth-error-popup.success button {
+  color: #0f6b46;
+}
+
+.auth-error-popup span {
+  font-size: 0.86rem;
+  grid-column: 1;
+  line-height: 1.4;
+}
+
+.auth-error-popup button {
+  color: #8a2b20;
+  font-size: 1.1rem;
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  line-height: 1;
+}
+
+.auth-reset-note {
+  background: var(--bg-soft);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--fg-muted);
+  font-size: 0.88rem;
+  line-height: 1.45;
+  padding: 12px;
+}
+
 /* ===== BUTTONS ===== */
 .primary-button {
   display: flex;
