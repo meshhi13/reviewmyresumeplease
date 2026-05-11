@@ -1759,7 +1759,7 @@ textarea:focus {
   border-radius: 10px;
   display: grid;
   gap: 10px;
-  grid-template-columns: minmax(0, 1fr) 92px auto;
+  grid-template-columns: minmax(0, 0.7fr) minmax(150px, 1fr) auto;
   padding: 10px;
 }
 
@@ -1781,13 +1781,22 @@ textarea:focus {
   line-height: 1;
 }
 
-.resume-score-panel input {
-  background: #f8faf9;
-  border: 1px solid var(--border);
+.score-slider-field span {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+}
+
+.score-slider-field span strong {
   color: var(--fg);
-  font-size: 0.86rem;
+  font-size: 0.78rem;
+  line-height: 1;
+}
+
+.resume-score-panel input[type="range"] {
+  accent-color: var(--accent);
+  cursor: pointer;
   height: 34px;
-  padding: 7px 8px;
   width: 100%;
 }
 

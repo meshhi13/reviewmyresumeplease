@@ -405,15 +405,16 @@ export function ResumeViewer({ currentUserId, token, apiBase }: Props) {
               <strong>{aggregateScore}</strong>
               <small>{scoreCount} user rating{scoreCount === 1 ? "" : "s"}</small>
             </div>
-            <label>
-              <span>Your score</span>
+            <label className="score-slider-field">
+              <span>Your score <strong>{scoreDraft || "0"}</strong></span>
               <input
-                type="number"
+                type="range"
                 min={0}
                 max={100}
+                step={1}
                 value={scoreDraft}
                 onChange={e => setScoreDraft(e.target.value)}
-                placeholder="0-100"
+                aria-label="Your score"
               />
             </label>
             <button className="secondary-button" onClick={submitScore}>
