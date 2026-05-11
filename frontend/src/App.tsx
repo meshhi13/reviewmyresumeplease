@@ -4,6 +4,7 @@ import { Bell, CheckSquare, Code2, Columns2, Eye, FileText, KeyRound, LogOut, Ma
 import { PdfDocument, loadPdfDocument } from "./pdfjs";
 import { PdfPage } from "./components/PdfPage";
 import { BrowsePage } from "./components/BrowsePage";
+import { LandingPage } from "./components/LandingPage";
 import { ProfilePage } from "./components/ProfilePage";
 import { ResumeViewer } from "./components/ResumeViewer";
 import { FAANG_PLUS_COMPANIES } from "./constants";
@@ -102,9 +103,11 @@ function App() {
       fetch(`${API}/auth/me`, { headers: { Authorization: `Bearer ${token}` } })
         .then(r => r.ok ? r.json() : Promise.reject())
         .then((u: User) => { setUser(u); setStatus("Welcome back."); })
-        .catch(() => { localStorage.removeItem("token"); navigate("/auth"); });
-    } else { navigate("/auth"); }
-  }, [navigate]);
+        .catch(() => { localStorage.removeItem("token"); if (location.pathname !== "/auth") navigate("/landing"); });
+    } else if (location.pathname !== "/auth" && location.pathname !== "/landing") {
+      navigate("/landing");
+    }
+  }, [navigate, location.pathname]);
 
   useEffect(() => {
     if (location.pathname !== "/auth") return;
@@ -633,10 +636,11 @@ function App() {
     </div>
   );
 
-  if (!user && location.pathname !== "/auth") return null;
+  if (!user && location.pathname !== "/auth" && location.pathname !== "/landing") return null;
 
   return (
     <Routes>
+      <Route path="/landing" element={<LandingPage isSignedIn={Boolean(user)} />} />
       <Route path="/auth" element={authView} />
       <Route path="/*" element={
         <div className="app-shell">
