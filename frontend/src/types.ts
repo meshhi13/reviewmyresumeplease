@@ -76,6 +76,8 @@ export type BrowseResume = {
   open_comment_count: number;
   downvote_count: number;
   aggregate_score: number;
+  score_count: number;
+  user_score: number | null;
 };
 
 export type AppNotification = {
@@ -109,4 +111,6 @@ export type SavedResume = {
   created_at: string;
   open_comment_count: number;
   aggregate_score: number;
+  score_count: number;
+  user_score: number | null;
 };

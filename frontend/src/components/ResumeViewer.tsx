@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useRef } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import { ArrowLeft, MessageSquare, FileWarning, RotateCcw, Send, Briefcase, GitPullRequest, CheckCircle, Wand2, Share2, CheckSquare, Square } from "lucide-react";
+import { ArrowLeft, MessageSquare, FileWarning, RotateCcw, Send, Briefcase, GitPullRequest, CheckCircle, Wand2, Share2, CheckSquare, Square, Star } from "lucide-react";
 import { loadPdfDocument } from "../pdfjs";
 import { PdfPage } from "./PdfPage";
 import type { Comment, Redaction } from "../types";
@@ -51,6 +51,11 @@ export function ResumeViewer({ currentUserId, token, apiBase }: Props) {
   const [latexSource, setLatexSource] = useState("");
   const [landedCompanies, setLandedCompanies] = useState<string[]>([]);
   const [reviewStatus, setReviewStatus] = useState("");
+  const [aggregateScore, setAggregateScore] = useState(0);
+  const [scoreCount, setScoreCount] = useState(0);
+  const [userScore, setUserScore] = useState<number | null>(null);
+  const [scoreDraft, setScoreDraft] = useState("");
+  const [scoreStatus, setScoreStatus] = useState("");
   const [loadError, setLoadError] = useState("");
   const [commentError, setCommentError] = useState("");
   const [scale, setScale] = useState(1.1);
@@ -76,6 +81,11 @@ export function ResumeViewer({ currentUserId, token, apiBase }: Props) {
     setComments([]);
     setSelectedResolveIds([]);
     setLandedCompanies([]);
+    setAggregateScore(0);
+    setScoreCount(0);
+    setUserScore(null);
+    setScoreDraft("");
+    setScoreStatus("");
     setVisibleTextSuggestion(null);
     setVisibleSuggestionReplacement("");
     setSelectedTextLines([]);
@@ -105,6 +115,10 @@ export function ResumeViewer({ currentUserId, token, apiBase }: Props) {
         setRedactions(meta.redactions || []);
         setLatexSource(meta.latex_source || "");
         setLandedCompanies(meta.landed_companies || []);
+        setAggregateScore(meta.aggregate_score ?? 0);
+        setScoreCount(meta.score_count ?? 0);
+        setUserScore(meta.user_score ?? null);
+        setScoreDraft(meta.user_score != null ? String(meta.user_score) : "");
       })
       .catch(() => { });
 
@@ -223,21 +237,28 @@ export function ResumeViewer({ currentUserId, token, apiBase }: Props) {
     window.setTimeout(() => setShareStatus(""), 2200);
   };
 
-  const applySuggestion = async (commentId: number) => {
-    const res = await fetch(`${apiBase}/resumes/${resumeId}/comments/${commentId}/suggestion/apply`, {
-      method: "PATCH", headers: h(),
-    });
-    if (res.ok) {
-      const updated = await res.json();
-      setComments(c => c.map(x => x.id === commentId ? updated : x));
-      const meta = await fetch(`${apiBase}/resumes/${resumeId}`, { headers: h() });
-      if (meta.ok) {
-        const next = await meta.json();
-        setLatexSource(next.latex_source || "");
-      }
-      const pdfRes = await fetch(`${apiBase}/resumes/${resumeId}/file`, { headers: h() });
-      if (pdfRes.ok) setPdf(await loadPdfDocument(await pdfRes.arrayBuffer()));
+  const submitScore = async () => {
+    const score = Number(scoreDraft);
+    if (!Number.isInteger(score) || score < 0 || score > 100) {
+      setScoreStatus("Use a whole number from 0 to 100.");
+      return;
     }
+    const res = await fetch(`${apiBase}/resumes/${resumeId}/score`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json", ...h() },
+      body: JSON.stringify({ score }),
+    });
+    const payload = await res.json().catch(() => null);
+    if (!res.ok) {
+      setScoreStatus(payload?.detail ?? "Could not save score.");
+      return;
+    }
+    setUserScore(payload.user_score);
+    setAggregateScore(payload.aggregate_score);
+    setScoreCount(payload.score_count);
+    setScoreDraft(String(payload.user_score));
+    setScoreStatus("Saved");
+    window.setTimeout(() => setScoreStatus(""), 1800);
   };
 
   const voteComment = async (commentId: number, vote: number) => {
@@ -278,7 +299,7 @@ export function ResumeViewer({ currentUserId, token, apiBase }: Props) {
   const canResolveComment = (c: Comment) => (
     c.status === "open" &&
     c.author_id === currentUserId &&
-    Boolean(c.resolved_by_resume_id || c.suggestion_status === "applied")
+    Boolean(c.resolved_by_resume_id)
   );
   const visibleComments = comments.filter(c => c.status === (tab === "open" ? "open" : "resolved"));
   const resolvableVisibleComments = visibleComments.filter(canResolveComment);
@@ -316,6 +337,7 @@ export function ResumeViewer({ currentUserId, token, apiBase }: Props) {
           <div className="viewer-title-block">
             <div className="viewer-title-row">
               <strong>{resumeTitle || "Resume"}</strong>
+              <span className="resume-score-badge"><Star size={13} />{aggregateScore} score · {scoreCount} rating{scoreCount === 1 ? "" : "s"}</span>
               {landedCompanies.length > 0 && (
                 <div className="toolbar-tags">
                   {landedCompanies.map(company => <span key={company} className="company-tag"><Briefcase size={11} />{company}</span>)}
@@ -376,7 +398,29 @@ export function ResumeViewer({ currentUserId, token, apiBase }: Props) {
 
       {/* Comment Sidebar */}
       <aside className={`comment-sidebar ${draftAnchor && visibleTextSuggestion ? "composing" : ""}`}>
-        <div className="comment-sidebar-header">
+          <div className="comment-sidebar-header">
+          <div className="resume-score-panel">
+            <div>
+              <span>Overall score</span>
+              <strong>{aggregateScore}</strong>
+              <small>{scoreCount} user rating{scoreCount === 1 ? "" : "s"}</small>
+            </div>
+            <label>
+              <span>Your score</span>
+              <input
+                type="number"
+                min={0}
+                max={100}
+                value={scoreDraft}
+                onChange={e => setScoreDraft(e.target.value)}
+                placeholder="0-100"
+              />
+            </label>
+            <button className="secondary-button" onClick={submitScore}>
+              <Star size={13} /> {userScore == null ? "Leave score" : "Update"}
+            </button>
+            {scoreStatus && <small className="score-status">{scoreStatus}</small>}
+          </div>
           <div className="issue-console-heading">
             <div>
               <h3>Issues</h3>
@@ -465,11 +509,6 @@ export function ResumeViewer({ currentUserId, token, apiBase }: Props) {
                       <pre className="suggestion-original">{c.suggestion_original}</pre>
                       <pre className="suggestion-replacement">{c.suggestion_replacement}</pre>
                     </div>
-                    {isOwner && c.suggestion_status === "pending" && (
-                      <div className="suggestion-actions">
-                        <button className="primary-button" onClick={() => applySuggestion(c.id)}><CheckCircle size={13} /> Apply fix</button>
-                      </div>
-                    )}
                   </div>
                 )}
                 {c.resolved_by_resume_id && (

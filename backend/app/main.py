@@ -25,7 +25,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
 from .database import Base, engine, get_db
-from .models import Comment, Resume, SessionToken, User, Review, CommentReply, CommentVote, Notification, PasswordResetToken
+from .models import Comment, Resume, SessionToken, User, Review, CommentReply, CommentVote, Notification, PasswordResetToken, ResumeScore
 from .schemas import (
     AuthResponse,
     BrowseResumeResponse,
@@ -37,6 +37,8 @@ from .schemas import (
     ForgotPasswordResponse,
     ResumeResponse,
     ResumeLandedCompaniesRequest,
+    ResumeScoreRequest,
+    ResumeScoreResponse,
     ResumeTitleRequest,
     NotificationResponse,
     ReviewCreateRequest,
@@ -134,6 +136,21 @@ def on_startup() -> None:
         connection.execute(text("ALTER TABLE resumes ADD COLUMN IF NOT EXISTS resolves_comment_id INTEGER"))
         connection.execute(text("ALTER TABLE resumes ADD COLUMN IF NOT EXISTS parent_resume_id INTEGER"))
         connection.execute(text("CREATE INDEX IF NOT EXISTS ix_resumes_parent_resume_id ON resumes(parent_resume_id)"))
+        connection.execute(text(
+            """
+            CREATE TABLE IF NOT EXISTS resume_scores (
+                id SERIAL PRIMARY KEY,
+                resume_id INTEGER NOT NULL REFERENCES resumes(id) ON DELETE CASCADE,
+                user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                score INTEGER NOT NULL CHECK (score >= 0 AND score <= 100),
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT now(),
+                updated_at TIMESTAMP WITH TIME ZONE DEFAULT now(),
+                CONSTRAINT uq_resume_scores_resume_user UNIQUE (resume_id, user_id)
+            )
+            """
+        ))
+        connection.execute(text("CREATE INDEX IF NOT EXISTS ix_resume_scores_resume_id ON resume_scores(resume_id)"))
+        connection.execute(text("CREATE INDEX IF NOT EXISTS ix_resume_scores_user_id ON resume_scores(user_id)"))
         connection.execute(text("ALTER TABLE comments ADD COLUMN IF NOT EXISTS resolved_by_resume_id INTEGER"))
         connection.execute(text("ALTER TABLE comments ADD COLUMN IF NOT EXISTS suggestion_start INTEGER"))
         connection.execute(text("ALTER TABLE comments ADD COLUMN IF NOT EXISTS suggestion_end INTEGER"))
@@ -334,7 +351,7 @@ def browse_resumes(
     query = (
         select(Resume)
         .where(Resume.anonymized.is_(False))
-        .options(selectinload(Resume.owner), selectinload(Resume.comments).selectinload(Comment.votes))
+        .options(selectinload(Resume.owner), selectinload(Resume.comments).selectinload(Comment.votes), selectinload(Resume.scores))
     )
     if search:
         term = f"%{search.lower()}%"
@@ -382,6 +399,8 @@ def browse_resumes(
             "open_comment_count": sum(1 for c in r.comments if c.status == "open"),
             "downvote_count": sum(1 for c in (r.comments or []) for v in c.votes if v.vote == -1),
             "aggregate_score": resume_aggregate_score(r),
+            "score_count": resume_score_count(r),
+            "user_score": user_resume_score(r, current_user.id),
         }
         for r in resumes
     ]
@@ -401,7 +420,7 @@ def list_resumes(
         db.scalars(
             select(Resume)
             .where(Resume.user_id == user_id)
-            .options(selectinload(Resume.comments))
+            .options(selectinload(Resume.comments), selectinload(Resume.scores))
             .order_by(Resume.created_at.desc(), Resume.id.desc())
         )
     )
@@ -441,7 +460,7 @@ def list_resumes(
 
     response = []
     for resume in resumes:
-        item = _resume_dict(resume)
+        item = _resume_dict(resume, current_user_id=current_user.id)
         parent = fix_parent_by_child_id.get(resume.id)
         if parent:
             item["fix_parent_resume_id"] = parent["resume_id"]
@@ -569,7 +588,7 @@ async def save_resume(
     # reload comments (empty on creation)
     db.refresh(resume, ["comments"])
     can_include_source = resume.user_id == current_user.id or (not resume.anonymized and not (resume.redactions or []))
-    return _resume_dict(resume, include_latex_source=can_include_source)
+    return _resume_dict(resume, include_latex_source=can_include_source, current_user_id=current_user.id)
 
 
 @app.get("/resumes/{resume_id}/file")
@@ -601,14 +620,14 @@ def get_resume(
     current_user: Annotated[User, Depends(get_current_user)],
 ) -> dict:
     resume = db.scalar(
-        select(Resume).where(Resume.id == resume_id).options(selectinload(Resume.comments))
+        select(Resume).where(Resume.id == resume_id).options(selectinload(Resume.comments), selectinload(Resume.scores))
     )
     if not resume:
         raise HTTPException(status_code=404, detail="Resume not found")
     if not can_view_resume(resume, current_user, db):
         raise HTTPException(status_code=403, detail="Resume not available")
     can_include_source = resume.user_id == current_user.id or (not resume.anonymized and not (resume.redactions or []))
-    return _resume_dict(resume, include_latex_source=can_include_source)
+    return _resume_dict(resume, include_latex_source=can_include_source, current_user_id=current_user.id)
 
 
 @app.patch("/resumes/{resume_id}/anonymized")
@@ -652,7 +671,7 @@ def update_resume_latex_source(
     current_user: Annotated[User, Depends(get_current_user)],
 ) -> dict:
     resume = db.scalar(
-        select(Resume).where(Resume.id == resume_id).options(selectinload(Resume.comments))
+        select(Resume).where(Resume.id == resume_id).options(selectinload(Resume.comments), selectinload(Resume.scores))
     )
     if not resume:
         raise HTTPException(status_code=404, detail="Resume not found")
@@ -666,7 +685,7 @@ def update_resume_latex_source(
         resume.title = payload.title or resume.title
     db.commit()
     db.refresh(resume)
-    return _resume_dict(resume)
+    return _resume_dict(resume, current_user_id=current_user.id)
 
 
 @app.patch("/resumes/{resume_id}/landed-companies", response_model=ResumeResponse)
@@ -677,7 +696,7 @@ def update_resume_landed_companies(
     current_user: Annotated[User, Depends(get_current_user)],
 ) -> dict:
     resume = db.scalar(
-        select(Resume).where(Resume.id == resume_id).options(selectinload(Resume.comments))
+        select(Resume).where(Resume.id == resume_id).options(selectinload(Resume.comments), selectinload(Resume.scores))
     )
     if not resume:
         raise HTTPException(status_code=404, detail="Resume not found")
@@ -686,7 +705,43 @@ def update_resume_landed_companies(
     resume.landed_companies = validate_landed_companies(payload.landed_companies)
     db.commit()
     db.refresh(resume)
-    return _resume_dict(resume)
+    return _resume_dict(resume, current_user_id=current_user.id)
+
+
+@app.put("/resumes/{resume_id}/score", response_model=ResumeScoreResponse)
+def score_resume(
+    resume_id: int,
+    payload: ResumeScoreRequest,
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> dict:
+    resume = db.scalar(
+        select(Resume).where(Resume.id == resume_id).options(selectinload(Resume.scores))
+    )
+    if not resume:
+        raise HTTPException(status_code=404, detail="Resume not found")
+    if not can_view_resume(resume, current_user, db):
+        raise HTTPException(status_code=403, detail="Resume not available")
+    existing = db.scalar(
+        select(ResumeScore).where(
+            ResumeScore.resume_id == resume_id,
+            ResumeScore.user_id == current_user.id,
+        )
+    )
+    if existing:
+        existing.score = payload.score
+        existing.updated_at = datetime.now(timezone.utc)
+    else:
+        db.add(ResumeScore(resume_id=resume_id, user_id=current_user.id, score=payload.score))
+    db.commit()
+    db.refresh(resume)
+    db.refresh(resume, ["scores"])
+    return {
+        "resume_id": resume.id,
+        "user_score": payload.score,
+        "aggregate_score": resume_aggregate_score(resume),
+        "score_count": resume_score_count(resume),
+    }
 
 
 @app.delete("/resumes/{resume_id}", status_code=204)
@@ -846,8 +901,8 @@ def resolve_comment(
         raise HTTPException(status_code=404, detail="Comment not found")
     if comment.author_id != current_user.id:
         raise HTTPException(status_code=403, detail="Only the issue author can resolve this issue")
-    if not comment.resolved_by_resume_id and comment.suggestion_status != "applied":
-        raise HTTPException(status_code=400, detail="A linked resume revision or applied LaTeX suggestion is required before resolving this issue")
+    if not comment.resolved_by_resume_id:
+        raise HTTPException(status_code=400, detail="A linked resume revision is required before resolving this issue")
     comment.status = "resolved"
     comment.resolved_at = datetime.now(timezone.utc)
     comment.resolved_by_id = current_user.id
@@ -895,8 +950,8 @@ def resolve_comments_bulk(
     for comment in comments:
         if comment.author_id != current_user.id:
             raise HTTPException(status_code=403, detail="Only issue authors can resolve their issues")
-        if not comment.resolved_by_resume_id and comment.suggestion_status != "applied":
-            raise HTTPException(status_code=400, detail="Every issue needs a linked resume revision or applied LaTeX suggestion before resolving")
+        if not comment.resolved_by_resume_id:
+            raise HTTPException(status_code=400, detail="Every issue needs a linked resume revision before resolving")
 
     now = datetime.now(timezone.utc)
     changed = []
@@ -941,49 +996,10 @@ def apply_comment_suggestion(
     db: Annotated[Session, Depends(get_db)],
     current_user: Annotated[User, Depends(get_current_user)],
 ) -> dict:
-    resume = db.scalar(
-        select(Resume).where(Resume.id == resume_id).options(selectinload(Resume.comments))
+    raise HTTPException(
+        status_code=410,
+        detail="Applying suggestions directly is disabled. Upload a new resume revision as the fix.",
     )
-    comment = db.scalar(
-        select(Comment)
-        .where(Comment.id == comment_id)
-        .options(selectinload(Comment.author), selectinload(Comment.resolved_by), selectinload(Comment.replies).selectinload(CommentReply.author), selectinload(Comment.votes))
-    )
-    if not resume or not comment or comment.resume_id != resume_id:
-        raise HTTPException(status_code=404, detail="Comment not found")
-    if resume.user_id != current_user.id:
-        raise HTTPException(status_code=403, detail="Only the resume owner can apply suggestions")
-    if comment.suggestion_status != "pending":
-        raise HTTPException(status_code=400, detail="This suggestion is not pending")
-    if comment.suggestion_start is None or comment.suggestion_end is None:
-        span = find_visible_text_span(resume.latex_source, comment.suggestion_original)
-        if span is None:
-            raise HTTPException(status_code=409, detail="This suggestion no longer matches the current resume source")
-        start, end = span
-        resume.latex_source = resume.latex_source[:start] + comment.suggestion_replacement + resume.latex_source[end:]
-    else:
-        if resume.latex_source[comment.suggestion_start:comment.suggestion_end] != comment.suggestion_original:
-            raise HTTPException(status_code=409, detail="This suggestion no longer matches the current LaTeX source")
-        resume.latex_source = (
-            resume.latex_source[:comment.suggestion_start]
-            + comment.suggestion_replacement
-            + resume.latex_source[comment.suggestion_end:]
-        )
-    resume.source_format = "latex"
-    resume.pdf_data = compile_latex_to_pdf(resume.latex_source)
-    resume.content_type = "application/pdf"
-    comment.suggestion_status = "applied"
-    create_notification(
-        db,
-        user_id=comment.author_id,
-        actor_id=current_user.id,
-        kind="suggestion_applied",
-        message=f"{current_user.display_name} applied your resume text suggestion",
-        target_url=f"/resume/{resume.id}",
-    )
-    db.commit()
-    db.refresh(comment)
-    return _comment_dict(comment, comment.author.display_name, comment.resolved_by.display_name if comment.resolved_by else None, current_user.id)
 
 
 @app.patch("/resumes/{resume_id}/comments/{comment_id}/suggestion/reject", response_model=CommentResponse)
@@ -1154,21 +1170,23 @@ def resume_downvote_score(resume: Resume) -> tuple[int, int, datetime, int]:
 
 
 def resume_aggregate_score(resume: Resume) -> int:
-    comments = resume.comments or []
-    open_issues = sum(1 for c in comments if c.status == "open")
-    resolved_issues = sum(1 for c in comments if c.status == "resolved")
-    pending_suggestions = sum(1 for c in comments if c.suggestion_status == "pending")
-    applied_suggestions = sum(1 for c in comments if c.suggestion_status == "applied")
-    upvotes = sum(1 for c in comments for v in c.votes if v.vote == 1)
-    downvotes = sum(1 for c in comments for v in c.votes if v.vote == -1)
-    score = 100
-    score -= open_issues * 10
-    score -= pending_suggestions * 4
-    score -= downvotes * 3
-    score += resolved_issues * 4
-    score += applied_suggestions * 3
-    score += upvotes * 2
-    return max(0, min(100, score))
+    scores = resume.scores or []
+    if not scores:
+        return 0
+    return round(sum(score.score for score in scores) / len(scores))
+
+
+def resume_score_count(resume: Resume) -> int:
+    return len(resume.scores or [])
+
+
+def user_resume_score(resume: Resume, user_id: int | None) -> int | None:
+    if user_id is None:
+        return None
+    for score in resume.scores or []:
+        if score.user_id == user_id:
+            return score.score
+    return None
 
 
 def find_visible_text_span(source: str, visible_text: str) -> tuple[int, int] | None:
@@ -1261,7 +1279,7 @@ def normalize_latex_visible_source(source: str) -> tuple[str, list[tuple[int, in
     return "".join(normalized_chars), normalized_spans
 
 
-def _resume_dict(r: Resume, include_latex_source: bool = True) -> dict:
+def _resume_dict(r: Resume, include_latex_source: bool = True, current_user_id: int | None = None) -> dict:
     open_count = sum(1 for c in r.comments if c.status == "open")
     return {
         "id": r.id, "user_id": r.user_id, "title": r.title, "file_name": r.file_name,
@@ -1274,6 +1292,8 @@ def _resume_dict(r: Resume, include_latex_source: bool = True) -> dict:
         "resolves_comment_id": r.resolves_comment_id,
         "created_at": r.created_at, "open_comment_count": open_count,
         "aggregate_score": resume_aggregate_score(r),
+        "score_count": resume_score_count(r),
+        "user_score": user_resume_score(r, current_user_id),
     }
 
 

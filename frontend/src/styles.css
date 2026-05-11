@@ -1752,6 +1752,55 @@ textarea:focus {
   grid-row: 1;
 }
 
+.resume-score-panel {
+  align-items: end;
+  background: #ffffff;
+  border: 1px solid rgba(20, 35, 31, 0.1);
+  border-radius: 10px;
+  display: grid;
+  gap: 10px;
+  grid-template-columns: minmax(0, 1fr) 92px auto;
+  padding: 10px;
+}
+
+.resume-score-panel div,
+.resume-score-panel label {
+  display: grid;
+  gap: 3px;
+}
+
+.resume-score-panel span,
+.resume-score-panel small {
+  color: var(--fg-muted);
+  font-size: 0.72rem;
+}
+
+.resume-score-panel strong {
+  color: var(--fg);
+  font-size: 1.45rem;
+  line-height: 1;
+}
+
+.resume-score-panel input {
+  background: #f8faf9;
+  border: 1px solid var(--border);
+  color: var(--fg);
+  font-size: 0.86rem;
+  height: 34px;
+  padding: 7px 8px;
+  width: 100%;
+}
+
+.resume-score-panel .secondary-button {
+  height: 34px;
+  padding: 0 10px;
+  white-space: nowrap;
+}
+
+.score-status {
+  grid-column: 1 / -1;
+}
+
 .issue-console-heading {
   align-items: flex-start;
   display: flex;
@@ -2210,11 +2259,11 @@ textarea:focus {
   gap: 10px;
   grid-column: 1;
   grid-row: 2;
-  justify-content: center;
+  justify-content: flex-start;
   max-height: none;
   min-height: 0;
   overflow: auto;
-  padding: 18px;
+  padding: 10px 18px 18px;
   position: relative;
   z-index: 1;
 }
