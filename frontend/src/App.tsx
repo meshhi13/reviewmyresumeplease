@@ -1,9 +1,10 @@
 import { ChangeEvent, FormEvent, useEffect, useMemo, useState } from "react";
 import { Link, Route, Routes, useNavigate, useLocation } from "react-router-dom";
-import { Bell, Code2, Columns2, Eye, FileText, KeyRound, LogOut, Mail, RotateCcw, Save, Shield, Upload, User as UserIcon, Users as UsersIcon, X } from "lucide-react";
+import { Bell, CheckSquare, Code2, Columns2, Eye, FileText, KeyRound, LogOut, Mail, MessageSquare, RotateCcw, Save, Shield, Square, Upload, User as UserIcon, Users as UsersIcon, Wand2, X } from "lucide-react";
 import { PdfDocument, loadPdfDocument } from "./pdfjs";
 import { PdfPage } from "./components/PdfPage";
 import { BrowsePage } from "./components/BrowsePage";
+import { LandingPage } from "./components/LandingPage";
 import { ProfilePage } from "./components/ProfilePage";
 import { ResumeViewer } from "./components/ResumeViewer";
 import { FAANG_PLUS_COMPANIES } from "./constants";
@@ -81,7 +82,8 @@ function App() {
   const [resumeTitle, setResumeTitle] = useState("");
   const [landedCompanies, setLandedCompanies] = useState<string[]>([]);
   const [customCompany, setCustomCompany] = useState("");
-  const [resolvesCommentId, setResolvesCommentId] = useState<number | null>(null);
+  const [selectedResolveCommentIds, setSelectedResolveCommentIds] = useState<number[]>([]);
+  const [parentResumeId, setParentResumeId] = useState<number | null>(null);
   const [ownComments, setOwnComments] = useState<(Comment & { resumeTitle: string })[]>([]);
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
   const [showNotifications, setShowNotifications] = useState(false);
@@ -101,9 +103,11 @@ function App() {
       fetch(`${API}/auth/me`, { headers: { Authorization: `Bearer ${token}` } })
         .then(r => r.ok ? r.json() : Promise.reject())
         .then((u: User) => { setUser(u); setStatus("Welcome back."); })
-        .catch(() => { localStorage.removeItem("token"); navigate("/auth"); });
-    } else { navigate("/auth"); }
-  }, [navigate]);
+        .catch(() => { localStorage.removeItem("token"); if (location.pathname !== "/auth") navigate("/landing"); });
+    } else if (location.pathname !== "/auth" && location.pathname !== "/landing") {
+      navigate("/landing");
+    }
+  }, [navigate, location.pathname]);
 
   useEffect(() => {
     if (location.pathname !== "/auth") return;
@@ -132,7 +136,7 @@ function App() {
   useEffect(() => {
     const state = location.state as { resolvesCommentId?: number } | null;
     if (location.pathname === "/upload" && state?.resolvesCommentId) {
-      setResolvesCommentId(state.resolvesCommentId);
+      setSelectedResolveCommentIds([state.resolvesCommentId]);
       navigate(location.pathname, { replace: true });
     }
     if (location.pathname === "/upload") {
@@ -291,7 +295,7 @@ function App() {
   async function saveResume() {
     if (!user || !latexSource.trim()) { setStatus("Add LaTeX source first."); return; }
     setIsSaving(true);
-    if (editingResumeId && !resolvesCommentId) {
+    if (editingResumeId && selectedResolveCommentIds.length === 0) {
       const res = await fetch(`${API}/resumes/${editingResumeId}/latex-source`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json", ...authHeaders() },
@@ -314,7 +318,11 @@ function App() {
     fd.append("redactions", JSON.stringify(redactions));
     fd.append("anonymized", String(anonymizeResume)); fd.append("notes", notes);
     fd.append("title", resumeTitle); fd.append("latex_source", latexSource); fd.append("landed_companies", JSON.stringify(landedCompanies));
-    if (resolvesCommentId) fd.append("resolves_comment_id", String(resolvesCommentId));
+    if (selectedResolveCommentIds.length > 0) {
+      fd.append("resolves_comment_id", String(selectedResolveCommentIds[0]));
+      fd.append("resolves_comment_ids", JSON.stringify(selectedResolveCommentIds));
+    }
+    if (parentResumeId) fd.append("parent_resume_id", String(parentResumeId));
     const res = await fetch(`${API}/users/${user.id}/resumes`, { method: "POST", headers: authHeaders(), body: fd });
     setIsSaving(false);
     if (!res.ok) {
@@ -323,13 +331,13 @@ function App() {
       setStatus("Could not save this resume.");
       return;
     }
-    await loadSavedResumes(user.id); setStatus("Saved."); setResolvesCommentId(null); setLandedCompanies([]); setCustomCompany(""); navigate("/profile");
+    await loadSavedResumes(user.id); setStatus("Saved."); setSelectedResolveCommentIds([]); setParentResumeId(null); setLandedCompanies([]); setCustomCompany(""); navigate("/profile");
   }
 
   function signOut() {
     setUser(null); setAuthToken(""); localStorage.removeItem("token");
     setPassword(""); setConfirmPassword(""); setPdf(null); setResumeFile(null);
-    setResetToken(""); setFileName(""); setEditingResumeId(null); setRedactions([]); setSavedResumes([]); setLandedCompanies([]); setCustomCompany(""); setNotifications([]); navigate("/auth");
+    setResetToken(""); setFileName(""); setEditingResumeId(null); setRedactions([]); setSavedResumes([]); setLandedCompanies([]); setCustomCompany(""); setParentResumeId(null); setNotifications([]); navigate("/auth");
   }
 
   function toggleLandedCompany(company: string) {
@@ -345,6 +353,30 @@ function App() {
       current.some(c => c.toLowerCase() === company.toLowerCase()) ? current : [...current, company]
     );
     setCustomCompany("");
+  }
+
+  const selectedResolveComments = useMemo(
+    () => ownComments.filter(comment => selectedResolveCommentIds.includes(comment.id)),
+    [ownComments, selectedResolveCommentIds]
+  );
+  const selectedResolveParentId = selectedResolveComments[0]?.resume_id ?? null;
+  const parentResumeOptions = useMemo(
+    () => savedResumes.filter(resume => resume.id !== editingResumeId),
+    [savedResumes, editingResumeId]
+  );
+
+  useEffect(() => {
+    if (selectedResolveParentId) setParentResumeId(selectedResolveParentId);
+  }, [selectedResolveParentId]);
+
+  function toggleResolveComment(comment: Comment & { resumeTitle: string }) {
+    setSelectedResolveCommentIds(current => {
+      if (current.includes(comment.id)) return current.filter(id => id !== comment.id);
+      const currentComments = ownComments.filter(item => current.includes(item.id));
+      const currentParentId = currentComments[0]?.resume_id ?? null;
+      if (currentParentId && currentParentId !== comment.resume_id) return [comment.id];
+      return [...current, comment.id];
+    });
   }
 
   /* ── AUTH ── */
@@ -374,7 +406,7 @@ function App() {
         </div>
         {authPopup && (
           <div className={`auth-error-popup ${authPopup.kind}`} role={authPopup.kind === "error" ? "alert" : "status"}>
-            <strong>{authPopup.kind === "error" ? "Check this" : "Email sent"}</strong>
+            <strong>{authPopup.kind === "error" ? "Alert" : "Email sent"}</strong>
             <span>{authPopup.message}</span>
             <button type="button" aria-label="Dismiss message" onClick={() => setAuthPopup(null)}>×</button>
           </div>
@@ -477,35 +509,79 @@ function App() {
         <section className="panel">
           <h2>Save Options</h2>
           <textarea onChange={e => setNotes(e.target.value)} placeholder="Optional note for reviewers" value={notes} />
-          {ownComments.length > 0 && (
+          {parentResumeOptions.length > 0 && (!editingResumeId || selectedResolveCommentIds.length > 0) && (
             <label>
-              <span>Resolves Comment (optional)</span>
+              <span>Parent Resume (optional)</span>
               <select
                 className="sort-select"
+                disabled={Boolean(selectedResolveParentId)}
                 style={{ width: "100%", marginTop: 4 }}
-                value={resolvesCommentId ?? ""}
-                onChange={e => setResolvesCommentId(e.target.value ? Number(e.target.value) : null)}
+                value={parentResumeId ?? ""}
+                onChange={e => setParentResumeId(e.target.value ? Number(e.target.value) : null)}
               >
-                <option value="">— None —</option>
-                {ownComments.map(c => (
-                  <option key={c.id} value={c.id}>
-                    [{c.resumeTitle}] issue #{c.id} p{c.page}: {c.body.slice(0, 60)}{c.body.length > 60 ? "…" : ""}
+                <option value="">No parent</option>
+                {parentResumeOptions.map(resume => (
+                  <option key={resume.id} value={resume.id}>
+                    {resume.title || resume.file_name}
                   </option>
                 ))}
               </select>
+              {selectedResolveParentId && <small className="form-note">Locked to the resume whose comments this upload fixes.</small>}
             </label>
           )}
-          {resolvesCommentId && (
-            <div className="issue-fix-banner">
-              Uploading this resume as a proposed fix for issue #{resolvesCommentId}.
+          {ownComments.length > 0 && (
+            <div className="resolve-picker">
+              <div className="panel-title-row">
+                <h3>Resolve comments</h3>
+                <span className="badge">{selectedResolveCommentIds.length} selected</span>
+              </div>
+              <p>Select one or more comments from the same resume. The uploaded resume will appear as their proposed fix.</p>
+              <div className="resolve-issue-list">
+                {ownComments.map(c => {
+                  const selected = selectedResolveCommentIds.includes(c.id);
+                  const lockedToAnotherResume = Boolean(selectedResolveParentId && selectedResolveParentId !== c.resume_id && !selected);
+                  return (
+                    <button
+                      key={c.id}
+                      type="button"
+                      className={`resolve-issue-card ${selected ? "selected" : ""}`}
+                      disabled={lockedToAnotherResume}
+                      onClick={() => toggleResolveComment(c)}
+                    >
+                      <div className="resolve-issue-head">
+                        {selected ? <CheckSquare size={15} /> : <Square size={15} />}
+                        <strong>{c.resumeTitle}</strong>
+                        <span>Issue #{c.id} · p{c.page}</span>
+                      </div>
+                      <div className="resolve-issue-body">
+                        <MessageSquare size={14} />
+                        <span>{c.body}</span>
+                      </div>
+                      {c.suggestion_status !== "none" && (
+                        <div className="resolve-suggestion-preview">
+                          <div><Wand2 size={13} /> Suggested change</div>
+                          <pre className="suggestion-original">{c.suggestion_original}</pre>
+                          <pre className="suggestion-replacement">{c.suggestion_replacement}</pre>
+                        </div>
+                      )}
+                      {lockedToAnotherResume && <small>Select comments from one resume at a time.</small>}
+                    </button>
+                  );
+                })}
+              </div>
             </div>
           )}
-          {editingResumeId && !resolvesCommentId && (
+          {selectedResolveComments.length > 0 && (
+            <div className="issue-fix-banner">
+              Uploading this resume as a proposed fix for {selectedResolveComments.length} issue{selectedResolveComments.length === 1 ? "" : "s"} on {selectedResolveComments[0].resumeTitle}.
+            </div>
+          )}
+          {editingResumeId && selectedResolveCommentIds.length === 0 && (
             <div className="issue-fix-banner">
               Saving changes to this existing LaTeX resume.
             </div>
           )}
-          <button className="primary-button" disabled={!latexSource.trim() || isSaving} onClick={saveResume}><Save size={14} />{isSaving ? "Saving…" : editingResumeId && !resolvesCommentId ? "Save Changes" : "Save for Review"}</button>
+          <button className="primary-button" disabled={!latexSource.trim() || isSaving} onClick={saveResume}><Save size={14} />{isSaving ? "Saving…" : editingResumeId && selectedResolveCommentIds.length === 0 ? "Save Changes" : "Save for Review"}</button>
         </section>
       </aside>
       <section className="workspace">
@@ -560,10 +636,11 @@ function App() {
     </div>
   );
 
-  if (!user && location.pathname !== "/auth") return null;
+  if (!user && location.pathname !== "/auth" && location.pathname !== "/landing") return null;
 
   return (
     <Routes>
+      <Route path="/landing" element={<LandingPage isSignedIn={Boolean(user)} />} />
       <Route path="/auth" element={authView} />
       <Route path="/*" element={
         <div className="app-shell">

@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useRef } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import { ArrowLeft, MessageSquare, FileWarning, RotateCcw, Send, Briefcase, GitPullRequest, CheckCircle, Wand2, XCircle, Share2, CheckSquare, Square } from "lucide-react";
+import { ArrowLeft, MessageSquare, FileWarning, RotateCcw, Send, Briefcase, GitPullRequest, CheckCircle, Wand2, Share2, CheckSquare, Square, Star } from "lucide-react";
 import { loadPdfDocument } from "../pdfjs";
 import { PdfPage } from "./PdfPage";
 import type { Comment, Redaction } from "../types";
@@ -27,7 +27,8 @@ function linesToAnchor(lines: SelectedTextLine[]): CommentAnchor | null {
 }
 
 export function ResumeViewer({ currentUserId, token, apiBase }: Props) {
-  const h = () => token ? { Authorization: `Bearer ${token}` } as HeadersInit : {} as HeadersInit;
+  const effectiveToken = token || localStorage.getItem("token") || "";
+  const h = () => effectiveToken ? { Authorization: `Bearer ${effectiveToken}` } as HeadersInit : {} as HeadersInit;
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const resumeId = Number(id);
@@ -50,7 +51,13 @@ export function ResumeViewer({ currentUserId, token, apiBase }: Props) {
   const [latexSource, setLatexSource] = useState("");
   const [landedCompanies, setLandedCompanies] = useState<string[]>([]);
   const [reviewStatus, setReviewStatus] = useState("");
+  const [aggregateScore, setAggregateScore] = useState(0);
+  const [scoreCount, setScoreCount] = useState(0);
+  const [userScore, setUserScore] = useState<number | null>(null);
+  const [scoreDraft, setScoreDraft] = useState("");
+  const [scoreStatus, setScoreStatus] = useState("");
   const [loadError, setLoadError] = useState("");
+  const [commentError, setCommentError] = useState("");
   const [scale, setScale] = useState(1.1);
   const [shareStatus, setShareStatus] = useState("");
   const [selectedResolveIds, setSelectedResolveIds] = useState<number[]>([]);
@@ -62,13 +69,23 @@ export function ResumeViewer({ currentUserId, token, apiBase }: Props) {
 
   useEffect(() => {
     if (!resumeId) return;
+    if (!effectiveToken) {
+      setLoadError("Sign in to review this resume.");
+      return;
+    }
     setPdf(null);
     setLoadError("");
+    setCommentError("");
     setLatexSource("");
     setRedactions([]);
     setComments([]);
     setSelectedResolveIds([]);
     setLandedCompanies([]);
+    setAggregateScore(0);
+    setScoreCount(0);
+    setUserScore(null);
+    setScoreDraft("");
+    setScoreStatus("");
     setVisibleTextSuggestion(null);
     setVisibleSuggestionReplacement("");
     setSelectedTextLines([]);
@@ -98,6 +115,10 @@ export function ResumeViewer({ currentUserId, token, apiBase }: Props) {
         setRedactions(meta.redactions || []);
         setLatexSource(meta.latex_source || "");
         setLandedCompanies(meta.landed_companies || []);
+        setAggregateScore(meta.aggregate_score ?? 0);
+        setScoreCount(meta.score_count ?? 0);
+        setUserScore(meta.user_score ?? null);
+        setScoreDraft(meta.user_score != null ? String(meta.user_score) : "");
       })
       .catch(() => { });
 
@@ -108,9 +129,10 @@ export function ResumeViewer({ currentUserId, token, apiBase }: Props) {
         setComments(data);
         setSelectedResolveIds([]);
       });
-  }, [resumeId, currentUserId, token]);
+  }, [resumeId, currentUserId, effectiveToken]);
 
   const refreshComments = async () => {
+    if (!effectiveToken) return;
     const res = await fetch(`${apiBase}/resumes/${resumeId}/comments`, { headers: h() });
     if (res.ok) {
       const data: Comment[] = await res.json();
@@ -127,6 +149,7 @@ export function ResumeViewer({ currentUserId, token, apiBase }: Props) {
     setVisibleTextSuggestion(text ? { original: text } : null);
     setVisibleSuggestionReplacement(text);
     setDraftAnchor(linesToAnchor(sorted));
+    setCommentError("");
     if (sorted.length > 0) setTimeout(() => textareaRef.current?.focus(), 50);
   };
 
@@ -137,6 +160,7 @@ export function ResumeViewer({ currentUserId, token, apiBase }: Props) {
     setVisibleSuggestionReplacement("");
     setSelectedTextLines([]);
     setCommentKind("comment");
+    setCommentError("");
   };
 
   const useSuggestionForDraft = () => {
@@ -155,6 +179,10 @@ export function ResumeViewer({ currentUserId, token, apiBase }: Props) {
 
   const submitComment = async () => {
     if (!draftAnchor || !draftBody.trim()) return;
+    if (!effectiveToken) {
+      setCommentError("Please sign in again before posting a comment.");
+      return;
+    }
     const replacement = visibleSuggestionReplacement.trim();
     const includeSuggestion = commentKind === "suggestion" && visibleTextSuggestion && replacement && replacement !== visibleTextSuggestion.original;
     const res = await fetch(`${apiBase}/resumes/${resumeId}/comments`, {
@@ -172,6 +200,9 @@ export function ResumeViewer({ currentUserId, token, apiBase }: Props) {
     if (res.ok) {
       clearDraft();
       await refreshComments();
+    } else {
+      const error = await res.json().catch(() => null);
+      setCommentError(formatApiError(error?.detail ?? "Could not post this suggestion."));
     }
   };
 
@@ -206,23 +237,28 @@ export function ResumeViewer({ currentUserId, token, apiBase }: Props) {
     window.setTimeout(() => setShareStatus(""), 2200);
   };
 
-  const updateSuggestion = async (commentId: number, action: "apply" | "reject") => {
-    const res = await fetch(`${apiBase}/resumes/${resumeId}/comments/${commentId}/suggestion/${action}`, {
-      method: "PATCH", headers: h(),
-    });
-    if (res.ok) {
-      const updated = await res.json();
-      setComments(c => c.map(x => x.id === commentId ? updated : x));
-      if (action === "apply") {
-        const meta = await fetch(`${apiBase}/resumes/${resumeId}`, { headers: h() });
-        if (meta.ok) {
-          const next = await meta.json();
-          setLatexSource(next.latex_source || "");
-        }
-        const pdfRes = await fetch(`${apiBase}/resumes/${resumeId}/file`, { headers: h() });
-        if (pdfRes.ok) setPdf(await loadPdfDocument(await pdfRes.arrayBuffer()));
-      }
+  const submitScore = async () => {
+    const score = Number(scoreDraft);
+    if (!Number.isInteger(score) || score < 0 || score > 100) {
+      setScoreStatus("Use a whole number from 0 to 100.");
+      return;
     }
+    const res = await fetch(`${apiBase}/resumes/${resumeId}/score`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json", ...h() },
+      body: JSON.stringify({ score }),
+    });
+    const payload = await res.json().catch(() => null);
+    if (!res.ok) {
+      setScoreStatus(payload?.detail ?? "Could not save score.");
+      return;
+    }
+    setUserScore(payload.user_score);
+    setAggregateScore(payload.aggregate_score);
+    setScoreCount(payload.score_count);
+    setScoreDraft(String(payload.user_score));
+    setScoreStatus("Saved");
+    window.setTimeout(() => setScoreStatus(""), 1800);
   };
 
   const voteComment = async (commentId: number, vote: number) => {
@@ -263,10 +299,11 @@ export function ResumeViewer({ currentUserId, token, apiBase }: Props) {
   const canResolveComment = (c: Comment) => (
     c.status === "open" &&
     c.author_id === currentUserId &&
-    Boolean(c.resolved_by_resume_id || c.suggestion_status === "applied")
+    Boolean(c.resolved_by_resume_id)
   );
   const visibleComments = comments.filter(c => c.status === (tab === "open" ? "open" : "resolved"));
   const resolvableVisibleComments = visibleComments.filter(canResolveComment);
+  const selectedResolveComments = comments.filter(c => selectedResolveIds.includes(c.id));
   const allResolvableSelected = resolvableVisibleComments.length > 0 && resolvableVisibleComments.every(c => selectedResolveIds.includes(c.id));
   const openCount = comments.filter(c => c.status === "open").length;
   const resolvedCount = comments.filter(c => c.status === "resolved").length;
@@ -285,6 +322,12 @@ export function ResumeViewer({ currentUserId, token, apiBase }: Props) {
     }
   };
 
+  function formatApiError(detail: unknown) {
+    if (typeof detail === "string") return detail;
+    if (Array.isArray(detail)) return detail.map((item: any) => item?.msg || item?.message || String(item)).join(" ");
+    return "Could not post this suggestion.";
+  }
+
   return (
     <div className="viewer-layout">
       {/* PDF Panel */}
@@ -294,6 +337,7 @@ export function ResumeViewer({ currentUserId, token, apiBase }: Props) {
           <div className="viewer-title-block">
             <div className="viewer-title-row">
               <strong>{resumeTitle || "Resume"}</strong>
+              <span className="resume-score-badge"><Star size={13} />{aggregateScore} score · {scoreCount} rating{scoreCount === 1 ? "" : "s"}</span>
               {landedCompanies.length > 0 && (
                 <div className="toolbar-tags">
                   {landedCompanies.map(company => <span key={company} className="company-tag"><Briefcase size={11} />{company}</span>)}
@@ -354,7 +398,30 @@ export function ResumeViewer({ currentUserId, token, apiBase }: Props) {
 
       {/* Comment Sidebar */}
       <aside className={`comment-sidebar ${draftAnchor && visibleTextSuggestion ? "composing" : ""}`}>
-        <div className="comment-sidebar-header">
+          <div className="comment-sidebar-header">
+          <div className="resume-score-panel">
+            <div>
+              <span>Overall score</span>
+              <strong>{aggregateScore}</strong>
+              <small>{scoreCount} user rating{scoreCount === 1 ? "" : "s"}</small>
+            </div>
+            <label className="score-slider-field">
+              <span>Your score <strong>{scoreDraft || "0"}</strong></span>
+              <input
+                type="range"
+                min={0}
+                max={100}
+                step={1}
+                value={scoreDraft}
+                onChange={e => setScoreDraft(e.target.value)}
+                aria-label="Your score"
+              />
+            </label>
+            <button className="secondary-button" onClick={submitScore}>
+              <Star size={13} /> {userScore == null ? "Leave score" : "Update"}
+            </button>
+            {scoreStatus && <small className="score-status">{scoreStatus}</small>}
+          </div>
           <div className="issue-console-heading">
             <div>
               <h3>Issues</h3>
@@ -375,13 +442,31 @@ export function ResumeViewer({ currentUserId, token, apiBase }: Props) {
           </div>
           {resolvableVisibleComments.length > 0 && (
             <div className="bulk-resolve-bar">
-              <button className="text-btn bulk-select-btn" onClick={toggleAllResolvable}>
-                {allResolvableSelected ? <CheckSquare size={14} /> : <Square size={14} />}
-                {allResolvableSelected ? "Clear" : "Select ready"}
-              </button>
-              <button className="primary-button" disabled={selectedResolveIds.length === 0} onClick={resolveSelectedComments}>
-                <CheckCircle size={14} /> Resolve {selectedResolveIds.length || ""}
-              </button>
+              <div className="bulk-resolve-actions">
+                <button className="text-btn bulk-select-btn" onClick={toggleAllResolvable}>
+                  {allResolvableSelected ? <CheckSquare size={14} /> : <Square size={14} />}
+                  {allResolvableSelected ? "Clear" : "Select ready"}
+                </button>
+                <button className="primary-button" disabled={selectedResolveIds.length === 0} onClick={resolveSelectedComments}>
+                  <CheckCircle size={14} /> Resolve {selectedResolveIds.length || ""}
+                </button>
+              </div>
+              {selectedResolveComments.length > 0 && (
+                <div className="bulk-resolve-preview">
+                  {selectedResolveComments.map(comment => (
+                    <div key={comment.id} className="bulk-resolve-preview-item">
+                      <strong>Issue #{comment.id}</strong>
+                      <span>{comment.body}</span>
+                      {comment.suggestion_status !== "none" && (
+                        <div className="bulk-resolve-suggestion">
+                          <pre className="suggestion-original">{comment.suggestion_original}</pre>
+                          <pre className="suggestion-replacement">{comment.suggestion_replacement}</pre>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -425,12 +510,6 @@ export function ResumeViewer({ currentUserId, token, apiBase }: Props) {
                       <pre className="suggestion-original">{c.suggestion_original}</pre>
                       <pre className="suggestion-replacement">{c.suggestion_replacement}</pre>
                     </div>
-                    {isOwner && c.suggestion_status === "pending" && (
-                      <div className="suggestion-actions">
-                        <button className="secondary-button" onClick={() => updateSuggestion(c.id, "reject")}><XCircle size={13} /> Reject</button>
-                        <button className="primary-button" onClick={() => updateSuggestion(c.id, "apply")}><CheckCircle size={13} /> Apply</button>
-                      </div>
-                    )}
                   </div>
                 )}
                 {c.resolved_by_resume_id && (
@@ -555,6 +634,7 @@ export function ResumeViewer({ currentUserId, token, apiBase }: Props) {
                   rows={3}
                   maxLength={2000}
                 />
+                {commentError && <p className="comment-submit-error" role="alert">{commentError}</p>}
                 <div style={{ display: "flex", gap: 8 }}>
                   <button className="secondary-button" onClick={clearDraft} style={{ flex: 1 }}>Cancel</button>
                   <button

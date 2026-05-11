@@ -209,6 +209,17 @@ class ResumeLandedCompaniesRequest(BaseModel):
     landed_companies: list[str] = Field(default_factory=list, max_length=20)
 
 
+class ResumeScoreRequest(BaseModel):
+    score: int = Field(ge=0, le=100)
+
+
+class ResumeScoreResponse(BaseModel):
+    resume_id: int
+    user_score: int
+    aggregate_score: int
+    score_count: int
+
+
 class BrowseResumeResponse(BaseModel):
     id: int
     user_id: int
@@ -225,6 +236,9 @@ class BrowseResumeResponse(BaseModel):
     comment_count: int = 0
     open_comment_count: int
     downvote_count: int = 0
+    aggregate_score: int = 0
+    score_count: int = 0
+    user_score: int | None = None
 
     model_config = {"from_attributes": True}
 
@@ -242,12 +256,16 @@ class ResumeResponse(BaseModel):
     anonymized: bool
     review_status: str
     notes: str
+    parent_resume_id: int | None = None
     resolves_comment_id: int | None = None
     fix_parent_resume_id: int | None = None
     fix_parent_resume_title: str | None = None
     fixes_comment_id: int | None = None
     created_at: datetime
     open_comment_count: int
+    aggregate_score: int = 0
+    score_count: int = 0
+    user_score: int | None = None
 
     model_config = {"from_attributes": True}
 

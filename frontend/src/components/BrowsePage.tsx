@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
-import { FileText, Clock, Users as UsersIcon, Search, ChevronRight, MessageSquare, Briefcase, ThumbsDown } from "lucide-react";
+import { FileText, Clock, Users as UsersIcon, Search, ChevronRight, MessageSquare, Briefcase, ThumbsDown, Star } from "lucide-react";
 import { FAANG_PLUS_COMPANIES } from "../constants";
 import type { BrowseResume } from "../types";
 
@@ -14,6 +14,7 @@ export function BrowsePage({ token, apiBase }: Props) {
   const [search, setSearch] = useState("");
   const [sort, setSort] = useState("downvotes");
   const [companyFilter, setCompanyFilter] = useState("");
+  const [minScore, setMinScore] = useState("");
   const [showCompanySuggestions, setShowCompanySuggestions] = useState(false);
   const navigate = useNavigate();
 
@@ -27,16 +28,17 @@ export function BrowsePage({ token, apiBase }: Props) {
   const selectCompany = (company: string) => {
     setCompanyFilter(company);
     setShowCompanySuggestions(false);
-    load(search, sort, company);
+    load(search, sort, company, minScore);
   };
 
-  const load = useCallback(async (s = search, so = sort, company = companyFilter) => {
+  const load = useCallback(async (s = search, so = sort, company = companyFilter, score = minScore) => {
     const params = new URLSearchParams({ sort: so });
     if (s) params.set("search", s);
     if (company) params.set("company", company);
+    if (score) params.set("min_score", score);
     const res = await fetch(`${apiBase}/resumes/browse?${params}`, { headers: h() });
     if (res.ok) setResumes(await res.json());
-  }, [token, apiBase, search, sort, companyFilter]);
+  }, [token, apiBase, search, sort, companyFilter, minScore]);
 
   useEffect(() => { load(); }, []);
 
@@ -55,16 +57,32 @@ export function BrowsePage({ token, apiBase }: Props) {
           <input
             placeholder="Search by title or filename..."
             value={search}
-            onChange={e => { setSearch(e.target.value); load(e.target.value, sort, companyFilter); }}
+            onChange={e => { setSearch(e.target.value); load(e.target.value, sort, companyFilter, minScore); }}
           />
         </div>
-        <select className="sort-select" value={sort} onChange={e => { setSort(e.target.value); load(search, e.target.value, companyFilter); }}>
+        <select className="sort-select" value={sort} onChange={e => { setSort(e.target.value); load(search, e.target.value, companyFilter, minScore); }}>
           <option value="downvotes">Most Downvoted</option>
+          <option value="score">Highest Score</option>
           <option value="popular">Most Activity</option>
           <option value="date_desc">Newest First</option>
           <option value="date_asc">Oldest First</option>
           <option value="name">Name A–Z</option>
         </select>
+        <label className="score-filter">
+          <Star size={14} />
+          <input
+            type="number"
+            min={0}
+            max={100}
+            placeholder="Min score"
+            value={minScore}
+            onChange={e => {
+              const next = e.target.value;
+              setMinScore(next);
+              load(search, sort, companyFilter, next);
+            }}
+          />
+        </label>
         <div className="company-autocomplete">
           <input
             className="company-filter-input"
@@ -79,7 +97,7 @@ export function BrowsePage({ token, apiBase }: Props) {
             onChange={e => {
               setCompanyFilter(e.target.value);
               setShowCompanySuggestions(true);
-              load(search, sort, e.target.value);
+              load(search, sort, e.target.value, minScore);
             }}
           />
           {showCompanySuggestions && (companyOptions.length > 0 || companyFilter) && (
@@ -117,6 +135,7 @@ export function BrowsePage({ token, apiBase }: Props) {
                 {r.title && <span className="card-meta" style={{ opacity: 0.6 }}>{r.file_name}</span>}
                 <span className="card-meta"><UsersIcon size={13} />{r.owner_display_name ?? "Anonymous"}</span>
                 <span className="card-meta"><Clock size={13} />{new Date(r.created_at).toLocaleDateString()}</span>
+                <span className="resume-score-badge"><Star size={13} />{r.aggregate_score} score</span>
                 {(r.landed_companies || []).length > 0 && (
                   <div className="company-tag-row">
                     {r.landed_companies.map(company => <span key={company} className="company-tag"><Briefcase size={11} />{company}</span>)}

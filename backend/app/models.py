@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, LargeBinary, String, Text, func
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, LargeBinary, String, Text, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -19,6 +19,7 @@ class User(Base):
     resumes: Mapped[list["Resume"]] = relationship(back_populates="owner", cascade="all, delete-orphan")
     sessions: Mapped[list["SessionToken"]] = relationship(back_populates="user", cascade="all, delete-orphan")
     reviews: Mapped[list["Review"]] = relationship(back_populates="reviewer", cascade="all, delete-orphan")
+    resume_scores: Mapped[list["ResumeScore"]] = relationship(back_populates="user", cascade="all, delete-orphan")
     authored_comments: Mapped[list["Comment"]] = relationship(back_populates="author", foreign_keys="Comment.author_id", cascade="all, delete-orphan")
     resolved_comments: Mapped[list["Comment"]] = relationship(back_populates="resolved_by", foreign_keys="Comment.resolved_by_id")
     notifications: Mapped[list["Notification"]] = relationship(
@@ -68,11 +69,13 @@ class Resume(Base):
     anonymized: Mapped[bool] = mapped_column(Boolean, default=False)
     review_status: Mapped[str] = mapped_column(String(80), default="ready_for_review")
     notes: Mapped[str] = mapped_column(Text, default="")
+    parent_resume_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     resolves_comment_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     owner: Mapped[User] = relationship(back_populates="resumes")
     reviews: Mapped[list["Review"]] = relationship(back_populates="resume", cascade="all, delete-orphan")
+    scores: Mapped[list["ResumeScore"]] = relationship(back_populates="resume", cascade="all, delete-orphan")
     comments: Mapped[list["Comment"]] = relationship(back_populates="resume", cascade="all, delete-orphan", order_by="Comment.created_at")
 
 
@@ -88,6 +91,21 @@ class Review(Base):
 
     resume: Mapped["Resume"] = relationship(back_populates="reviews")
     reviewer: Mapped["User"] = relationship(back_populates="reviews")
+
+
+class ResumeScore(Base):
+    __tablename__ = "resume_scores"
+    __table_args__ = (UniqueConstraint("resume_id", "user_id", name="uq_resume_scores_resume_user"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    resume_id: Mapped[int] = mapped_column(ForeignKey("resumes.id", ondelete="CASCADE"), index=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    score: Mapped[int] = mapped_column(Integer)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    resume: Mapped["Resume"] = relationship(back_populates="scores")
+    user: Mapped["User"] = relationship(back_populates="resume_scores")
 
 
 class Comment(Base):
