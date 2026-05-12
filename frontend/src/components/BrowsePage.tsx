@@ -126,7 +126,7 @@ export function BrowsePage({ token, apiBase }: Props) {
       ) : (
         <div className="resume-grid">
           {resumes.map(r => (
-            <button key={r.id} className="resume-card browse-card" onClick={() => navigate(`/resume/${r.id}`)}>
+            <button key={r.id} className="resume-card browse-card" onClick={() => navigate(`/app/resume/${r.id}`)}>
               <div className="icon-btn" style={{ width: 48, height: 48, borderRadius: 12, background: "var(--accent-dim)", color: "var(--accent)", border: "none" }}>
                 <FileText size={24} />
               </div>

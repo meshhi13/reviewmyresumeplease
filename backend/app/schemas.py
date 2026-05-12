@@ -85,28 +85,6 @@ class AuthResponse(BaseModel):
     token: str
 
 
-class ReviewCreateRequest(BaseModel):
-    rating: int = Field(ge=1, le=5)
-    feedback: str = Field(min_length=1, max_length=2000)
-
-    @field_validator("feedback")
-    @classmethod
-    def feedback_is_clean(cls, value: str) -> str:
-        return clean_text(value)
-
-
-class ReviewResponse(BaseModel):
-    id: int
-    resume_id: int
-    reviewer_id: int
-    reviewer_display_name: str
-    rating: int
-    feedback: str
-    created_at: datetime
-
-    model_config = {"from_attributes": True}
-
-
 class CommentCreateRequest(BaseModel):
     body: str = Field(min_length=1, max_length=2000)
     page: int = Field(ge=1)

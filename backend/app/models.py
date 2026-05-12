@@ -18,7 +18,6 @@ class User(Base):
 
     resumes: Mapped[list["Resume"]] = relationship(back_populates="owner", cascade="all, delete-orphan")
     sessions: Mapped[list["SessionToken"]] = relationship(back_populates="user", cascade="all, delete-orphan")
-    reviews: Mapped[list["Review"]] = relationship(back_populates="reviewer", cascade="all, delete-orphan")
     resume_scores: Mapped[list["ResumeScore"]] = relationship(back_populates="user", cascade="all, delete-orphan")
     authored_comments: Mapped[list["Comment"]] = relationship(back_populates="author", foreign_keys="Comment.author_id", cascade="all, delete-orphan")
     resolved_comments: Mapped[list["Comment"]] = relationship(back_populates="resolved_by", foreign_keys="Comment.resolved_by_id")
@@ -74,23 +73,8 @@ class Resume(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     owner: Mapped[User] = relationship(back_populates="resumes")
-    reviews: Mapped[list["Review"]] = relationship(back_populates="resume", cascade="all, delete-orphan")
     scores: Mapped[list["ResumeScore"]] = relationship(back_populates="resume", cascade="all, delete-orphan")
     comments: Mapped[list["Comment"]] = relationship(back_populates="resume", cascade="all, delete-orphan", order_by="Comment.created_at")
-
-
-class Review(Base):
-    __tablename__ = "reviews"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
-    resume_id: Mapped[int] = mapped_column(ForeignKey("resumes.id"), index=True)
-    reviewer_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
-    rating: Mapped[int] = mapped_column(Integer)
-    feedback: Mapped[str] = mapped_column(Text)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
-
-    resume: Mapped["Resume"] = relationship(back_populates="reviews")
-    reviewer: Mapped["User"] = relationship(back_populates="reviews")
 
 
 class ResumeScore(Base):

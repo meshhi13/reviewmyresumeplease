@@ -224,8 +224,8 @@ export function ProfilePage({ user, savedResumes, setSavedResumes, token, apiBas
             {r.open_comment_count === 0 && r.review_status !== "ready_for_review" && (
               <button className="icon-btn" title="Resubmit for review" onClick={() => resubmit(r.id)}><RotateCcw size={16} /></button>
             )}
-            <Link to={`/resume/${r.id}`} className="secondary-button compact-action">View</Link>
-            <Link to={`/upload?edit=${r.id}`} className="secondary-button compact-action">Edit LaTeX</Link>
+            <Link to={`/app/resume/${r.id}`} className="secondary-button compact-action">View</Link>
+            <Link to={`/app/upload?edit=${r.id}`} className="secondary-button compact-action">Edit LaTeX</Link>
             <button className="icon-btn" title="Delete resume" style={{ color: "#c0392b", borderColor: "rgba(192,57,43,0.3)" }} onClick={() => deleteResume(r.id)}><Trash2 size={16} /></button>
           </div>
         </div>
@@ -263,7 +263,7 @@ export function ProfilePage({ user, savedResumes, setSavedResumes, token, apiBas
           <FileText />
           <h3>No Resumes Yet</h3>
           <p>Upload your first resume to get started with peer reviews.</p>
-          <Link to="/upload" className="primary-button"><Upload size={14} /> Upload a Resume</Link>
+          <Link to="/app/upload" className="primary-button"><Upload size={14} /> Upload a Resume</Link>
         </div>
       ) : (
         <div className="profile-tree">

@@ -356,7 +356,7 @@ export function ResumeViewer({ currentUserId, token, apiBase }: Props) {
               {shareStatus && <span className="viewer-share-status">{shareStatus}</span>}
             </div>
             {isOwner && (
-              <button className="secondary-button" onClick={() => navigate(`/upload?edit=${resumeId}`)}>
+              <button className="secondary-button" onClick={() => navigate(`/app/upload?edit=${resumeId}`)}>
                 Edit LaTeX
               </button>
             )}
@@ -517,7 +517,7 @@ export function ResumeViewer({ currentUserId, token, apiBase }: Props) {
                     <GitPullRequest size={14} />
                     <div>
                       <span>Proposed fix uploaded</span>
-                      <button className="text-btn" onClick={() => navigate(`/resume/${c.resolved_by_resume_id}`)}>
+                      <button className="text-btn" onClick={() => navigate(`/app/resume/${c.resolved_by_resume_id}`)}>
                         View {c.resolved_by_resume_title || "revision"}
                       </button>
                     </div>
@@ -554,7 +554,7 @@ export function ResumeViewer({ currentUserId, token, apiBase }: Props) {
                   </div>
                   <button className="text-btn" onClick={() => { setActiveReplyId(c.id); setReplyBody(""); }}>Reply</button>
                   {c.status === "open" && isOwner && !c.resolved_by_resume_id && (
-                    <button className="text-btn" style={{ marginLeft: "auto", color: "var(--accent)" }} onClick={() => navigate("/upload", { state: { resolvesCommentId: c.id } })}>
+                    <button className="text-btn" style={{ marginLeft: "auto", color: "var(--accent)" }} onClick={() => navigate("/app/upload", { state: { resolvesCommentId: c.id } })}>
                       Upload Fix
                     </button>
                   )}
@@ -586,7 +586,7 @@ export function ResumeViewer({ currentUserId, token, apiBase }: Props) {
                   <p className="comment-resolved-note">
                     ✓ Resolved by {c.resolved_by_display_name}
                     {c.resolved_by_resume_id && (
-                      <> — <a href={`/resume/${c.resolved_by_resume_id}`} className="text-btn" style={{ display: "inline", padding: 0, fontSize: "inherit", textTransform: "none", letterSpacing: 0 }} onClick={e => { e.stopPropagation(); navigate(`/resume/${c.resolved_by_resume_id}`); }}>View Revision →</a></>
+                      <> — <a href={`/app/resume/${c.resolved_by_resume_id}`} className="text-btn" style={{ display: "inline", padding: 0, fontSize: "inherit", textTransform: "none", letterSpacing: 0 }} onClick={e => { e.stopPropagation(); navigate(`/app/resume/${c.resolved_by_resume_id}`); }}>View Revision →</a></>
                     )}
                   </p>
                 )}

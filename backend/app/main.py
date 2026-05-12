@@ -25,7 +25,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
 from .database import Base, engine, get_db
-from .models import Comment, Resume, SessionToken, User, Review, CommentReply, CommentVote, Notification, PasswordResetToken, ResumeScore
+from .models import Comment, Resume, SessionToken, User, CommentReply, CommentVote, Notification, PasswordResetToken, ResumeScore
 from .schemas import (
     AuthResponse,
     BrowseResumeResponse,
@@ -41,8 +41,6 @@ from .schemas import (
     ResumeScoreResponse,
     ResumeTitleRequest,
     NotificationResponse,
-    ReviewCreateRequest,
-    ReviewResponse,
     ResetPasswordRequest,
     SignInRequest,
     UserResponse,
@@ -62,28 +60,6 @@ RATE_LIMITS = {
     "write": (90, 60),
     "default": (240, 60),
 }
-
-FAANG_PLUS_COMPANIES = [
-    "Meta",
-    "Apple",
-    "Amazon",
-    "Netflix",
-    "Google",
-    "Microsoft",
-    "OpenAI",
-    "NVIDIA",
-    "Tesla",
-    "Uber",
-    "Airbnb",
-    "Stripe",
-    "Databricks",
-    "Snowflake",
-    "Salesforce",
-    "Adobe",
-    "LinkedIn",
-    "Palantir",
-    "Bloomberg",
-]
 
 allowed_origins = os.environ["ALLOWED_ORIGINS"].split(",")
 
@@ -178,11 +154,6 @@ def on_startup() -> None:
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
-
-
-@app.get("/companies/faang-plus")
-def list_faang_plus_companies() -> dict[str, list[str]]:
-    return {"companies": FAANG_PLUS_COMPANIES}
 
 
 # ─── Auth ────────────────────────────────────────────────────────────────────
@@ -580,7 +551,7 @@ async def save_resume(
                 actor_id=current_user.id,
                 kind="fix_uploaded",
                 message=f"{current_user.display_name} uploaded a resume revision for your issue",
-                target_url=f"/resume/{original_resume.id}",
+                target_url=f"/app/resume/{original_resume.id}",
             )
 
     db.commit()
@@ -837,7 +808,7 @@ def create_comment(
         actor_id=current_user.id,
         kind="issue_opened",
         message=f"{current_user.display_name} opened an issue on your resume",
-        target_url=f"/resume/{resume.id}",
+        target_url=f"/app/resume/{resume.id}",
     )
     db.commit()
     return _comment_dict(comment, current_user.display_name, None, current_user.id)
@@ -912,7 +883,7 @@ def resolve_comment(
         actor_id=current_user.id,
         kind="issue_resolved",
         message=f"{current_user.display_name} resolved an issue after reviewing your revision",
-        target_url=f"/resume/{resume.id}",
+        target_url=f"/app/resume/{resume.id}",
     )
     db.commit()
     db.refresh(comment)
@@ -970,7 +941,7 @@ def resolve_comments_bulk(
             actor_id=current_user.id,
             kind="issue_resolved",
             message=f"{current_user.display_name} resolved {len(changed)} {noun} after reviewing your revision",
-            target_url=f"/resume/{resume.id}",
+            target_url=f"/app/resume/{resume.id}",
         )
 
     db.commit()
@@ -988,51 +959,6 @@ def resolve_comments_bulk(
         for comment in comments
     ]
 
-
-@app.patch("/resumes/{resume_id}/comments/{comment_id}/suggestion/apply", response_model=CommentResponse)
-def apply_comment_suggestion(
-    resume_id: int,
-    comment_id: int,
-    db: Annotated[Session, Depends(get_db)],
-    current_user: Annotated[User, Depends(get_current_user)],
-) -> dict:
-    raise HTTPException(
-        status_code=410,
-        detail="Applying suggestions directly is disabled. Upload a new resume revision as the fix.",
-    )
-
-
-@app.patch("/resumes/{resume_id}/comments/{comment_id}/suggestion/reject", response_model=CommentResponse)
-def reject_comment_suggestion(
-    resume_id: int,
-    comment_id: int,
-    db: Annotated[Session, Depends(get_db)],
-    current_user: Annotated[User, Depends(get_current_user)],
-) -> dict:
-    resume = db.get(Resume, resume_id)
-    comment = db.scalar(
-        select(Comment)
-        .where(Comment.id == comment_id)
-        .options(selectinload(Comment.author), selectinload(Comment.resolved_by), selectinload(Comment.replies).selectinload(CommentReply.author), selectinload(Comment.votes))
-    )
-    if not resume or not comment or comment.resume_id != resume_id:
-        raise HTTPException(status_code=404, detail="Comment not found")
-    if resume.user_id != current_user.id:
-        raise HTTPException(status_code=403, detail="Only the resume owner can reject suggestions")
-    if comment.suggestion_status != "pending":
-        raise HTTPException(status_code=400, detail="This suggestion is not pending")
-    comment.suggestion_status = "rejected"
-    create_notification(
-        db,
-        user_id=comment.author_id,
-        actor_id=current_user.id,
-        kind="suggestion_rejected",
-        message=f"{current_user.display_name} rejected your LaTeX suggestion",
-        target_url=f"/resume/{resume.id}",
-    )
-    db.commit()
-    db.refresh(comment)
-    return _comment_dict(comment, comment.author.display_name, comment.resolved_by.display_name if comment.resolved_by else None, current_user.id)
 
 @app.post("/resumes/{resume_id}/comments/{comment_id}/replies")
 def create_reply(
@@ -1065,7 +991,7 @@ def create_reply(
             actor_id=current_user.id,
             kind="issue_reply",
             message=f"{current_user.display_name} replied on a resume issue",
-            target_url=f"/resume/{resume.id}",
+            target_url=f"/app/resume/{resume.id}",
         )
     db.commit()
     return {
@@ -1113,31 +1039,6 @@ def vote_comment(
     
     # Reload author and resolved_by for the response
     return {"deleted": False, "comment": _comment_dict(comment, comment.author.display_name, comment.resolved_by.display_name if comment.resolved_by else None, current_user.id)}
-
-
-# ─── Legacy reviews (kept for back-compat) ───────────────────────────────────
-
-@app.post("/resumes/{resume_id}/reviews", response_model=ReviewResponse)
-def create_review(
-    resume_id: int,
-    payload: ReviewCreateRequest,
-    db: Annotated[Session, Depends(get_db)],
-    current_user: Annotated[User, Depends(get_current_user)],
-) -> dict:
-    resume = db.get(Resume, resume_id)
-    if not resume:
-        raise HTTPException(status_code=404, detail="Resume not found")
-    if resume.user_id == current_user.id:
-        raise HTTPException(status_code=403, detail="You cannot review your own resume")
-    if resume.review_status != "ready_for_review":
-        raise HTTPException(status_code=400, detail="Resume is not open for review")
-    review = Review(resume_id=resume.id, reviewer_id=current_user.id, rating=payload.rating, feedback=payload.feedback.strip())
-    db.add(review)
-    db.commit()
-    db.refresh(review)
-    return {"id": review.id, "resume_id": review.resume_id, "reviewer_id": review.reviewer_id,
-            "reviewer_display_name": current_user.display_name, "rating": review.rating,
-            "feedback": review.feedback, "created_at": review.created_at}
 
 
 # ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -1391,8 +1292,7 @@ def normalize_landed_company(company: str) -> str:
         return ""
     if len(trimmed) > 80:
         raise HTTPException(status_code=400, detail="Landed company names must be 80 characters or fewer")
-    allowed = {known.lower(): known for known in FAANG_PLUS_COMPANIES}
-    return allowed.get(trimmed.lower(), trimmed)
+    return trimmed
 
 
 def _notification_dict(n: Notification) -> dict:
