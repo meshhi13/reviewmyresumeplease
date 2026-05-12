@@ -1,6 +1,4 @@
-# ResumeReviewPlatform
-
-reviewmyresumeplease platform.
+# reviewmyresumeplease
 
 ## What is included
 
