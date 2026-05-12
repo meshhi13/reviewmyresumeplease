@@ -243,7 +243,7 @@ function App() {
   const [showNotifications, setShowNotifications] = useState(false);
   const [toast, setToast] = useState<AppNotification | null>(null);
   const [editorViewMode, setEditorViewMode] = useState<EditorViewMode>("split");
-  const hydratedFixParentIdRef = useRef<number | null>(null);
+  const hydratedParentResumeIdRef = useRef<number | null>(null);
 
   const navigate = useNavigate();
   const location = useLocation();
@@ -536,18 +536,19 @@ function App() {
   }, [selectedResolveParentId]);
 
   useEffect(() => {
-    if (location.pathname !== "/app/upload" || !authToken || !selectedResolveParentId) {
-      if (!selectedResolveParentId) hydratedFixParentIdRef.current = null;
+    if (location.pathname !== "/app/upload" || !authToken || !parentResumeId) {
+      if (!parentResumeId) hydratedParentResumeIdRef.current = null;
       return;
     }
-    if (hydratedFixParentIdRef.current === selectedResolveParentId) return;
-    hydratedFixParentIdRef.current = selectedResolveParentId;
-    setStatus("Loading the original resume for this fix…");
-    fetch(`${API}/resumes/${selectedResolveParentId}`, { headers: authHeaders() })
+    if (hydratedParentResumeIdRef.current === parentResumeId) return;
+    hydratedParentResumeIdRef.current = parentResumeId;
+    const isFixParent = selectedResolveParentId === parentResumeId;
+    setStatus(isFixParent ? "Loading the original resume for this fix…" : "Loading the selected parent resume…");
+    fetch(`${API}/resumes/${parentResumeId}`, { headers: authHeaders() })
       .then(async r => {
         if (r.ok) return r.json();
         const err = await r.json().catch(() => null);
-        throw new Error(err?.detail ?? "Could not load the original resume.");
+        throw new Error(err?.detail ?? "Could not load the parent resume.");
       })
       .then(async (resume: SavedResume) => {
         const inheritedSource = resume.latex_source || STARTER_LATEX;
@@ -561,13 +562,13 @@ function App() {
         setPdf(null);
         setCompileError("");
         await compileLatex(inheritedSource);
-        setStatus("Loaded the original resume source and redactions for this fix.");
+        setStatus(isFixParent ? "Loaded the original resume source and redactions for this fix." : "Loaded the parent resume source and redactions.");
       })
       .catch((error: Error) => {
-        hydratedFixParentIdRef.current = null;
-        setStatus(error.message || "Could not load the original resume for this fix.");
+        hydratedParentResumeIdRef.current = null;
+        setStatus(error.message || "Could not load the parent resume.");
       });
-  }, [location.pathname, authToken, selectedResolveParentId]);
+  }, [location.pathname, authToken, parentResumeId, selectedResolveParentId]);
 
   function toggleResolveComment(comment: Comment & { resumeTitle: string }) {
     setSelectedResolveCommentIds(current => {
