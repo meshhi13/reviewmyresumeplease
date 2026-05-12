@@ -69,9 +69,16 @@ app.add_middleware(
 
 
 @app.middleware("http")
+async def strip_api_prefix(request: Request, call_next):
+    if request.scope["path"].startswith("/api/"):
+        request.scope["path"] = request.scope["path"][4:]
+    return await call_next(request)
+
+
+@app.middleware("http")
 async def rate_limit_requests(request: Request, call_next):
     client = request.client.host if request.client else "unknown"
-    path = request.url.path
+    path = request.scope["path"]
     if path in {"/health", "/metrics"}:
         return await call_next(request)
     bucket_name = "auth" if path.startswith("/auth/") else "write" if request.method in {"POST", "PATCH", "DELETE"} else "default"
