@@ -1,6 +1,4 @@
-# ResumeReviewPlatform
-
-reviewmyresumeplease platform for resume iteration and peer feedback.
+# reviewmyresumeplease
 
 ## What is included
 
