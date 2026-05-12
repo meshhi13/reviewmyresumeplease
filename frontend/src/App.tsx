@@ -1,5 +1,5 @@
-import { ChangeEvent, FormEvent, useEffect, useMemo, useState } from "react";
-import { Link, Route, Routes, useNavigate, useLocation } from "react-router-dom";
+import { ChangeEvent, FormEvent, SyntheticEvent, useEffect, useMemo, useRef, useState } from "react";
+import { Link, Navigate, Route, Routes, useNavigate, useLocation } from "react-router-dom";
 import { Bell, CheckSquare, Code2, Columns2, Eye, FileText, KeyRound, LogOut, Mail, MessageSquare, RotateCcw, Save, Shield, Square, Upload, User as UserIcon, Users as UsersIcon, Wand2, X } from "lucide-react";
 import { PdfDocument, loadPdfDocument } from "./pdfjs";
 import { PdfPage } from "./components/PdfPage";
@@ -12,42 +12,196 @@ import type { Redaction, SavedResume, Comment, AppNotification } from "./types";
 
 const API = import.meta.env.VITE_API_BASE_URL;
 
-const STARTER_LATEX = String.raw`\documentclass[10pt]{article}
-\usepackage[margin=0.65in]{geometry}
+const STARTER_LATEX = String.raw`%-------------------------
+% Resume in Latex
+% Author : Jake Gutierrez
+% Based off of: https://github.com/sb2nov/resume
+% License : MIT
+%------------------------
+
+\documentclass[letterpaper,11pt]{article}
+
+\usepackage{latexsym}
+\usepackage[empty]{fullpage}
+\usepackage{titlesec}
+\usepackage{marvosym}
+\usepackage[usenames,dvipsnames]{color}
+\usepackage{verbatim}
 \usepackage{enumitem}
 \usepackage[hidelinks]{hyperref}
-\pagenumbering{gobble}
-\setlength{\parindent}{0pt}
-\setlist[itemize]{leftmargin=*, noitemsep, topsep=2pt}
+\usepackage{fancyhdr}
+\usepackage[english]{babel}
+\usepackage{tabularx}
+\input{glyphtounicode}
+
+
+\pagestyle{fancy}
+\fancyhf{} % clear all header and footer fields
+\fancyfoot{}
+\renewcommand{\headrulewidth}{0pt}
+\renewcommand{\footrulewidth}{0pt}
+
+% Adjust margins
+\addtolength{\oddsidemargin}{-0.5in}
+\addtolength{\evensidemargin}{-0.5in}
+\addtolength{\textwidth}{1in}
+\addtolength{\topmargin}{-.5in}
+\addtolength{\textheight}{1.0in}
+
+\urlstyle{same}
+
+\raggedbottom
+\raggedright
+\setlength{\tabcolsep}{0in}
+
+% Sections formatting
+\titleformat{\section}{
+  \vspace{-4pt}\scshape\raggedright\large
+}{}{0em}{}[\color{black}\titlerule \vspace{-5pt}]
+
+% Ensure that generate pdf is machine readable/ATS parsable
+\pdfgentounicode=1
+
+%-------------------------
+% Custom commands
+\newcommand{\resumeItem}[1]{
+  \item\small{
+    {#1 \vspace{-2pt}}
+  }
+}
+
+\newcommand{\resumeSubheading}[4]{
+  \vspace{-2pt}\item
+    \begin{tabular*}{0.97\textwidth}[t]{l@{\extracolsep{\fill}}r}
+      \textbf{#1} & #2 \\
+      \textit{\small#3} & \textit{\small #4} \\
+    \end{tabular*}\vspace{-7pt}
+}
+
+\newcommand{\resumeSubSubheading}[2]{
+    \item
+    \begin{tabular*}{0.97\textwidth}{l@{\extracolsep{\fill}}r}
+      \textit{\small#1} & \textit{\small #2} \\
+    \end{tabular*}\vspace{-7pt}
+}
+
+\newcommand{\resumeProjectHeading}[2]{
+    \item
+    \begin{tabular*}{0.97\textwidth}{l@{\extracolsep{\fill}}r}
+      \small#1 & #2 \\
+    \end{tabular*}\vspace{-7pt}
+}
+
+\newcommand{\resumeSubItem}[1]{\resumeItem{#1}\vspace{-4pt}}
+
+\renewcommand\labelitemii{$\vcenter{\hbox{\tiny$\bullet$}}$}
+
+\newcommand{\resumeSubHeadingListStart}{\begin{itemize}[leftmargin=0.15in, label={}]}
+\newcommand{\resumeSubHeadingListEnd}{\end{itemize}}
+\newcommand{\resumeItemListStart}{\begin{itemize}}
+\newcommand{\resumeItemListEnd}{\end{itemize}\vspace{-5pt}}
+
+%-------------------------------------------
+%%%%%%  RESUME STARTS HERE  %%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
 
 \begin{document}
 
-{\LARGE Your Name}\\
-\href{mailto:you@example.com}{you@example.com} \quad
-\href{https://linkedin.com/in/yourname}{linkedin.com/in/yourname} \quad
-\href{https://github.com/yourname}{github.com/yourname}
+\begin{center}
+    \textbf{\Huge \scshape Jake Ryan} \\ \vspace{1pt}
+    \small 123-456-7890 $|$ \href{mailto:x@x.com}{\underline{jake@su.edu}} $|$ 
+    \href{https://linkedin.com/in/...}{\underline{linkedin.com/in/jake}} $|$
+    \href{https://github.com/...}{\underline{github.com/jake}}
+\end{center}
 
-\section*{Education}
-\textbf{University Name} \hfill Expected 2026\\
-B.S. Computer Science
 
-\section*{Experience}
-\textbf{Software Engineering Intern, Company} \hfill Summer 2025
-\begin{itemize}
-  \item Built a production feature that improved a key metric by 20\%.
-  \item Collaborated with design and backend partners to ship reliable user-facing workflows.
-\end{itemize}
+%-----------EDUCATION-----------
+\section{Education}
+  \resumeSubHeadingListStart
+    \resumeSubheading
+      {Southwestern University}{Georgetown, TX}
+      {Bachelor of Arts in Computer Science, Minor in Business}{Aug. 2018 -- May 2021}
+    \resumeSubheading
+      {Blinn College}{Bryan, TX}
+      {Associate's in Liberal Arts}{Aug. 2014 -- May 2018}
+  \resumeSubHeadingListEnd
 
-\section*{Projects}
-\textbf{Resume Review Platform}
-\begin{itemize}
-  \item Created a peer-review system with issue tracking, revisions, and LaTeX resume editing.
-\end{itemize}
 
-\section*{Skills}
-Python, TypeScript, React, FastAPI, SQL, Docker
+%-----------EXPERIENCE-----------
+\section{Experience}
+  \resumeSubHeadingListStart
 
-\end{document}`;
+    \resumeSubheading
+      {Undergraduate Research Assistant}{June 2020 -- Present}
+      {Texas A\&M University}{College Station, TX}
+      \resumeItemListStart
+        \resumeItem{Developed a REST API using FastAPI and PostgreSQL to store data from learning management systems}
+        \resumeItem{Developed a full-stack web application using Flask, React, PostgreSQL and Docker to analyze GitHub data}
+        \resumeItem{Explored ways to visualize GitHub collaboration in a classroom setting}
+      \resumeItemListEnd
+      
+    \resumeSubheading
+      {Information Technology Support Specialist}{Sep. 2018 -- Present}
+      {Southwestern University}{Georgetown, TX}
+      \resumeItemListStart
+        \resumeItem{Communicate with managers to set up campus computers used on campus}
+        \resumeItem{Assess and troubleshoot computer problems brought by students, faculty and staff}
+        \resumeItem{Maintain upkeep of computers, classroom equipment, and 200 printers across campus}
+    \resumeItemListEnd
+
+    \resumeSubheading
+      {Artificial Intelligence Research Assistant}{May 2019 -- July 2019}
+      {Southwestern University}{Georgetown, TX}
+      \resumeItemListStart
+        \resumeItem{Explored methods to generate video game dungeons based off of \emph{The Legend of Zelda}}
+        \resumeItem{Developed a game in Java to test the generated dungeons}
+        \resumeItem{Contributed 50K+ lines of code to an established codebase via Git}
+        \resumeItem{Conducted  a human subject study to determine which video game dungeon generation technique is enjoyable}
+        \resumeItem{Wrote an 8-page paper and gave multiple presentations on-campus}
+        \resumeItem{Presented virtually to the World Conference on Computational Intelligence}
+      \resumeItemListEnd
+
+  \resumeSubHeadingListEnd
+
+
+%-----------PROJECTS-----------
+\section{Projects}
+    \resumeSubHeadingListStart
+      \resumeProjectHeading
+          {\textbf{Gitlytics} $|$ \emph{Python, Flask, React, PostgreSQL, Docker}}{June 2020 -- Present}
+          \resumeItemListStart
+            \resumeItem{Developed a full-stack web application using with Flask serving a REST API with React as the frontend}
+            \resumeItem{Implemented GitHub OAuth to get data from user’s repositories}
+            \resumeItem{Visualized GitHub data to show collaboration}
+            \resumeItem{Used Celery and Redis for asynchronous tasks}
+          \resumeItemListEnd
+      \resumeProjectHeading
+          {\textbf{Simple Paintball} $|$ \emph{Spigot API, Java, Maven, TravisCI, Git}}{May 2018 -- May 2020}
+          \resumeItemListStart
+            \resumeItem{Developed a Minecraft server plugin to entertain kids during free time for a previous job}
+            \resumeItem{Published plugin to websites gaining 2K+ downloads and an average 4.5/5-star review}
+            \resumeItem{Implemented continuous delivery using TravisCI to build the plugin upon new a release}
+            \resumeItem{Collaborated with Minecraft server administrators to suggest features and get feedback about the plugin}
+          \resumeItemListEnd
+    \resumeSubHeadingListEnd
+
+
+
+%
+%-----------PROGRAMMING SKILLS-----------
+\section{Technical Skills}
+  \begin{itemize}[leftmargin=0.15in, label={}]
+      \small{\item{
+      \textbf{Languages}{: Java, Python, C/C++, SQL (Postgres), JavaScript, HTML/CSS, R} \\
+      \textbf{Frameworks}{: React, Node.js, Flask, JUnit, WordPress, Material-UI, FastAPI} \\
+      \textbf{Developer Tools}{: Git, Docker, TravisCI, Google Cloud Platform, VS Code, Visual Studio, PyCharm, IntelliJ, Eclipse} \\
+      \textbf{Libraries}{: pandas, NumPy, Matplotlib}
+      }}
+  \end{itemize}
+  
+%-------------------------------------------
+\end{document}
+`;
 
 type User = { id: number; email: string; display_name: string };
 type AuthResponse = { user: User; token: string };
@@ -89,6 +243,7 @@ function App() {
   const [showNotifications, setShowNotifications] = useState(false);
   const [toast, setToast] = useState<AppNotification | null>(null);
   const [editorViewMode, setEditorViewMode] = useState<EditorViewMode>("split");
+  const hydratedFixParentIdRef = useRef<number | null>(null);
 
   const navigate = useNavigate();
   const location = useLocation();
@@ -98,14 +253,16 @@ function App() {
 
   useEffect(() => {
     const token = localStorage.getItem("token");
+    const isAuthRoute = location.pathname.startsWith("/auth");
+    const isLandingRoute = location.pathname === "/" || location.pathname === "/landing";
     if (token) {
       setAuthToken(token);
       fetch(`${API}/auth/me`, { headers: { Authorization: `Bearer ${token}` } })
         .then(r => r.ok ? r.json() : Promise.reject())
         .then((u: User) => { setUser(u); setStatus("Welcome back."); })
-        .catch(() => { localStorage.removeItem("token"); if (location.pathname !== "/auth") navigate("/landing"); });
-    } else if (location.pathname !== "/auth" && location.pathname !== "/landing") {
-      navigate("/landing");
+        .catch(() => { localStorage.removeItem("token"); if (!isAuthRoute) navigate("/"); });
+    } else if (!isAuthRoute && !isLandingRoute) {
+      navigate("/");
     }
   }, [navigate, location.pathname]);
 
@@ -135,11 +292,11 @@ function App() {
 
   useEffect(() => {
     const state = location.state as { resolvesCommentId?: number } | null;
-    if (location.pathname === "/upload" && state?.resolvesCommentId) {
+    if (location.pathname === "/app/upload" && state?.resolvesCommentId) {
       setSelectedResolveCommentIds([state.resolvesCommentId]);
       navigate(location.pathname, { replace: true });
     }
-    if (location.pathname === "/upload") {
+    if (location.pathname === "/app/upload") {
       const params = new URLSearchParams(location.search);
       const editId = params.get("edit");
       if (editId && authToken) {
@@ -148,6 +305,7 @@ function App() {
           .then((resume: SavedResume) => {
             setEditingResumeId(resume.id);
             setLatexSource(resume.latex_source || STARTER_LATEX);
+            setRedactions(resume.redactions || []);
             setResumeTitle(resume.title || resume.file_name.replace(/\.pdf$/i, ""));
             setLandedCompanies(resume.landed_companies || []);
             setFileName(resume.file_name);
@@ -195,14 +353,22 @@ function App() {
     });
   }
 
+  function toAppPath(targetUrl: string) {
+    if (!targetUrl) return "/app";
+    if (targetUrl.startsWith("/app")) return targetUrl;
+    if (targetUrl === "/" || targetUrl.startsWith("/auth")) return targetUrl;
+    if (targetUrl.startsWith("/")) return `/app${targetUrl}`;
+    return `/app/${targetUrl}`;
+  }
+
   async function openNotification(notification: AppNotification) {
     await fetch(`${API}/notifications/${notification.id}/read`, { method: "PATCH", headers: authHeaders() });
     setNotifications(current => current.map(n => n.id === notification.id ? { ...n, read: true } : n));
     setShowNotifications(false);
-    navigate(notification.target_url);
+    navigate(toAppPath(notification.target_url));
   }
 
-  async function handleSignIn(e: FormEvent<HTMLFormElement>) {
+  async function handleSignIn(e: SyntheticEvent<HTMLFormElement>) {
     e.preventDefault();
     setAuthPopup(null);
     if (authMode === "forgot-password") {
@@ -228,7 +394,7 @@ function App() {
       if (!res.ok) { showAuthError(payload?.detail ?? "Could not reset password."); return; }
       const auth = payload as AuthResponse;
       setUser(auth.user); setAuthToken(auth.token); localStorage.setItem("token", auth.token);
-      setPassword(""); setConfirmPassword(""); setResetToken(""); navigate("/");
+      setPassword(""); setConfirmPassword(""); setResetToken(""); navigate("/app");
       return;
     }
     if (authMode === "create-account" && password !== confirmPassword) { showAuthError("Passwords do not match."); return; }
@@ -239,7 +405,7 @@ function App() {
     if (!res.ok) { const err = await res.json().catch(() => null); showAuthError(err?.detail ?? "Could not sign in."); return; }
     const auth = (await res.json()) as AuthResponse;
     setUser(auth.user); setAuthToken(auth.token); localStorage.setItem("token", auth.token);
-    setConfirmPassword(""); navigate("/");
+    setConfirmPassword(""); navigate("/app");
   }
 
   function showAuthError(detail: unknown) {
@@ -310,7 +476,7 @@ function App() {
       }
       await loadSavedResumes(user.id);
       setStatus("Saved.");
-      navigate("/profile");
+      navigate("/app/profile");
       return;
     }
 
@@ -331,7 +497,7 @@ function App() {
       setStatus("Could not save this resume.");
       return;
     }
-    await loadSavedResumes(user.id); setStatus("Saved."); setSelectedResolveCommentIds([]); setParentResumeId(null); setLandedCompanies([]); setCustomCompany(""); navigate("/profile");
+    await loadSavedResumes(user.id); setStatus("Saved."); setSelectedResolveCommentIds([]); setParentResumeId(null); setLandedCompanies([]); setCustomCompany(""); navigate("/app/profile");
   }
 
   function signOut() {
@@ -368,6 +534,40 @@ function App() {
   useEffect(() => {
     if (selectedResolveParentId) setParentResumeId(selectedResolveParentId);
   }, [selectedResolveParentId]);
+
+  useEffect(() => {
+    if (location.pathname !== "/app/upload" || !authToken || !selectedResolveParentId) {
+      if (!selectedResolveParentId) hydratedFixParentIdRef.current = null;
+      return;
+    }
+    if (hydratedFixParentIdRef.current === selectedResolveParentId) return;
+    hydratedFixParentIdRef.current = selectedResolveParentId;
+    setStatus("Loading the original resume for this fix…");
+    fetch(`${API}/resumes/${selectedResolveParentId}`, { headers: authHeaders() })
+      .then(async r => {
+        if (r.ok) return r.json();
+        const err = await r.json().catch(() => null);
+        throw new Error(err?.detail ?? "Could not load the original resume.");
+      })
+      .then(async (resume: SavedResume) => {
+        const inheritedSource = resume.latex_source || STARTER_LATEX;
+        setEditingResumeId(null);
+        setLatexSource(inheritedSource);
+        setRedactions(resume.redactions || []);
+        setResumeTitle(resume.title ? `${resume.title} revision` : resume.file_name.replace(/\.pdf$/i, " revision"));
+        setLandedCompanies(resume.landed_companies || []);
+        setFileName(resume.file_name);
+        setResumeFile(null);
+        setPdf(null);
+        setCompileError("");
+        await compileLatex(inheritedSource);
+        setStatus("Loaded the original resume source and redactions for this fix.");
+      })
+      .catch((error: Error) => {
+        hydratedFixParentIdRef.current = null;
+        setStatus(error.message || "Could not load the original resume for this fix.");
+      });
+  }, [location.pathname, authToken, selectedResolveParentId]);
 
   function toggleResolveComment(comment: Comment & { resumeTitle: string }) {
     setSelectedResolveCommentIds(current => {
@@ -636,20 +836,21 @@ function App() {
     </div>
   );
 
-  if (!user && location.pathname !== "/auth" && location.pathname !== "/landing") return null;
+  if (!user && location.pathname.startsWith("/app")) return null;
 
   return (
     <Routes>
-      <Route path="/landing" element={<LandingPage isSignedIn={Boolean(user)} />} />
+      <Route path="/" element={<LandingPage isSignedIn={Boolean(user)} />} />
+      <Route path="/landing" element={<Navigate to="/" replace />} />
       <Route path="/auth" element={authView} />
-      <Route path="/*" element={
+      <Route path="/app/*" element={
         <div className="app-shell">
           <header className="top-nav">
-            <Link to="/" className="nav-brand"><Shield size={18} /><span>reviewmyresumeplease</span></Link>
+            <Link to="/app" className="nav-brand"><Shield size={18} /><span>reviewmyresumeplease</span></Link>
             <nav className="nav-links">
-              <Link to="/" className={location.pathname === "/" ? "active" : ""}><UsersIcon size={16} /> Browse</Link>
-              <Link to="/profile" className={location.pathname === "/profile" ? "active" : ""}><UserIcon size={16} /> Profile</Link>
-              <Link to="/upload" className={location.pathname === "/upload" ? "active" : ""}><Upload size={16} /> Upload</Link>
+              <Link to="/app" className={location.pathname === "/app" ? "active" : ""}><UsersIcon size={16} /> Browse</Link>
+              <Link to="/app/profile" className={location.pathname.startsWith("/app/profile") ? "active" : ""}><UserIcon size={16} /> Profile</Link>
+              <Link to="/app/upload" className={location.pathname.startsWith("/app/upload") ? "active" : ""}><Upload size={16} /> Upload</Link>
             </nav>
             <div className="nav-user">
               <div className="notification-center">
@@ -690,14 +891,15 @@ function App() {
               </button>
             )}
             <Routes>
-              <Route path="/" element={<BrowsePage token={authToken} apiBase={API} />} />
-              <Route path="/profile" element={<ProfilePage user={user} savedResumes={savedResumes} setSavedResumes={setSavedResumes} token={authToken} apiBase={API} onSignOut={signOut} />} />
-              <Route path="/upload" element={uploadView} />
-              <Route path="/resume/:id" element={<ResumeViewer currentUserId={user?.id ?? null} token={authToken} apiBase={API} />} />
+              <Route index element={<BrowsePage token={authToken} apiBase={API} />} />
+              <Route path="profile" element={<ProfilePage user={user} savedResumes={savedResumes} setSavedResumes={setSavedResumes} token={authToken} apiBase={API} onSignOut={signOut} />} />
+              <Route path="upload" element={uploadView} />
+              <Route path="resume/:id" element={<ResumeViewer currentUserId={user?.id ?? null} token={authToken} apiBase={API} />} />
             </Routes>
           </main>
         </div>
       } />
+      <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );
 }

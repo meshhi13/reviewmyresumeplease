@@ -1,6 +1,6 @@
 # ResumeReviewPlatform
 
-Minimal MVP sketch for a reviewmyresumeplease platform.
+reviewmyresumeplease platform.
 
 ## What is included
 
@@ -42,4 +42,4 @@ pip install -r requirements.txt
 uvicorn app.main:app --reload
 ```
 
-For local backend development outside Docker, make sure Postgres is running and set `DATABASE_URL` if it is not available at `postgresql+psycopg://resume:resume@localhost:5432/resume_review`.
+For local backend development outside Docker, make sure Postgres is running and set `DATABASE_URL``.
