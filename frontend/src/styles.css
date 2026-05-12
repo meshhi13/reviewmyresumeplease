@@ -1725,6 +1725,11 @@ h4 {
   padding: 12px;
 }
 
+.google-auth-button {
+  min-height: 48px;
+  width: 100%;
+}
+
 /* ===== BUTTONS ===== */
 .primary-button {
   display: flex;
@@ -2208,9 +2213,44 @@ h4 {
   margin-bottom: 4px;
 }
 
+.profile-username-row,
+.profile-username-editor {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.profile-username-row h3 {
+  margin-bottom: 0;
+}
+
+.profile-username-editor input {
+  background: rgba(0, 0, 0, 0.03);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--fg);
+  min-height: 38px;
+  min-width: min(280px, 100%);
+  padding: 8px 12px;
+}
+
+.icon-btn.danger {
+  color: #c0392b;
+  border-color: rgba(192, 57, 43, 0.3);
+}
+
 .profile-details p {
   color: var(--fg-muted);
   font-size: 0.9375rem;
+}
+
+.profile-status {
+  color: var(--accent);
+  display: block;
+  font-size: 0.78rem;
+  font-weight: 700;
+  margin-top: 8px;
 }
 
 .profile-section-header {

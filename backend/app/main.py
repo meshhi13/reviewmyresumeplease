@@ -2,7 +2,6 @@ from datetime import datetime, timezone
 from typing import Annotated
 import base64
 from collections import defaultdict, deque
-from email.message import EmailMessage
 import secrets
 import hashlib
 import hmac
@@ -10,39 +9,36 @@ import json
 import os
 import re
 import shutil
-import smtplib
-import ssl
 import subprocess
 import tempfile
 import time
+import urllib.parse
+import urllib.request
 
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from prometheus_fastapi_instrumentator import Instrumentator
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import JSONResponse, RedirectResponse, Response
+from google.auth.transport import requests as google_requests
+from google.oauth2 import id_token
 from sqlalchemy import select, text, func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
 from .database import Base, engine, get_db
-from .models import Comment, Resume, SessionToken, User, CommentReply, CommentVote, Notification, PasswordResetToken, ResumeScore
+from .models import Comment, Resume, SessionToken, User, CommentReply, CommentVote, Notification, ResumeScore
 from .schemas import (
-    AuthResponse,
     BrowseResumeResponse,
     CommentBulkResolveRequest,
     CommentCreateRequest,
     CommentResponse,
-    CreateAccountRequest,
-    ForgotPasswordRequest,
-    ForgotPasswordResponse,
     ResumeResponse,
     ResumeLandedCompaniesRequest,
     ResumeScoreRequest,
     ResumeScoreResponse,
     ResumeTitleRequest,
     NotificationResponse,
-    ResetPasswordRequest,
-    SignInRequest,
+    UserProfileUpdateRequest,
     UserResponse,
     CommentReplyCreateRequest,
     CommentVoteRequest,
@@ -134,21 +130,6 @@ def on_startup() -> None:
         connection.execute(text("ALTER TABLE comments ADD COLUMN IF NOT EXISTS suggestion_replacement TEXT NOT NULL DEFAULT ''"))
         connection.execute(text("ALTER TABLE comments ADD COLUMN IF NOT EXISTS suggestion_status VARCHAR(20) NOT NULL DEFAULT 'none'"))
         connection.execute(text("ALTER TABLE notifications ADD COLUMN IF NOT EXISTS actor_id INTEGER"))
-        connection.execute(text(
-            """
-            CREATE TABLE IF NOT EXISTS password_reset_tokens (
-                id SERIAL PRIMARY KEY,
-                user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-                token_hash VARCHAR(64) NOT NULL UNIQUE,
-                expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
-                used_at TIMESTAMP WITH TIME ZONE,
-                created_at TIMESTAMP WITH TIME ZONE DEFAULT now()
-            )
-            """
-        ))
-        connection.execute(text("CREATE INDEX IF NOT EXISTS ix_password_reset_tokens_user_id ON password_reset_tokens(user_id)"))
-        connection.execute(text("CREATE INDEX IF NOT EXISTS ix_password_reset_tokens_token_hash ON password_reset_tokens(token_hash)"))
-        connection.execute(text("CREATE INDEX IF NOT EXISTS ix_password_reset_tokens_expires_at ON password_reset_tokens(expires_at)"))
 
 
 @app.get("/health")
@@ -158,73 +139,57 @@ def health() -> dict[str, str]:
 
 # ─── Auth ────────────────────────────────────────────────────────────────────
 
-@app.post("/auth/create-account", response_model=AuthResponse)
-def create_account(payload: CreateAccountRequest, db: Annotated[Session, Depends(get_db)]) -> dict:
-    email = payload.email.lower().strip()
-    display_name = payload.display_name or name_from_email(email)
-    user = db.scalar(select(User).where(User.email == email))
-
-    if user and user.password_hash:
-        raise HTTPException(status_code=409, detail="An account with this email already exists")
-
-    if user:
-        user.display_name = display_name
-        user.password_hash = hash_password(payload.password)
-    else:
-        user = User(email=email, display_name=display_name, password_hash=hash_password(payload.password))
-        db.add(user)
-        try:
-            db.flush()
-        except IntegrityError:
-            db.rollback()
-            raise HTTPException(status_code=409, detail="An account with this email already exists")
-
-    return create_session_response(user, db)
+@app.get("/auth/google/start")
+def start_google_auth(next: str = "/app") -> RedirectResponse:
+    query = {
+        "client_id": google_client_id(),
+        "redirect_uri": google_redirect_uri(),
+        "response_type": "code",
+        "scope": "openid email profile",
+        "state": create_oauth_state(next),
+        "prompt": "select_account",
+    }
+    url = "https://accounts.google.com/o/oauth2/v2/auth?" + urllib.parse.urlencode(query)
+    return RedirectResponse(url)
 
 
-@app.post("/auth/sign-in", response_model=AuthResponse)
-def sign_in(payload: SignInRequest, db: Annotated[Session, Depends(get_db)]) -> dict:
-    email = payload.email.lower().strip()
-    user = db.scalar(select(User).where(User.email == email))
-    if not user or not user.password_hash or not verify_password(payload.password, user.password_hash):
-        raise HTTPException(status_code=401, detail="Invalid email or password")
-    return create_session_response(user, db)
-
-
-@app.post("/auth/forgot-password", response_model=ForgotPasswordResponse)
-def forgot_password(payload: ForgotPasswordRequest, db: Annotated[Session, Depends(get_db)]) -> dict:
-    email = payload.email.lower().strip()
-    user = db.scalar(select(User).where(User.email == email))
-    response = {"message": "If an account exists, a reset link has been sent."}
-    if user and user.password_hash:
-        raw_token = create_password_reset_token(user, db)
-        try:
-            send_password_reset_email(user.email, raw_token)
-        except Exception as exc:
-            db.query(PasswordResetToken).filter(
-                PasswordResetToken.token_hash == hash_reset_token(raw_token),
-                PasswordResetToken.used_at.is_(None),
-            ).update({"used_at": datetime.now(timezone.utc)})
-            db.commit()
-            raise HTTPException(
-                status_code=502,
-                detail="Could not send reset email. Please check SMTP settings and try again.",
-            ) from exc
-    return response
-
-
-@app.post("/auth/reset-password", response_model=AuthResponse)
-def reset_password(payload: ResetPasswordRequest, db: Annotated[Session, Depends(get_db)]) -> dict:
-    reset_token = verify_password_reset_token(payload.reset_token, db)
-    user = db.get(User, reset_token.user_id)
-    if not user:
-        raise HTTPException(status_code=400, detail="Invalid or expired reset link")
-    user.password_hash = hash_password(payload.password)
-    reset_token.used_at = datetime.now(timezone.utc)
-    db.query(SessionToken).filter(SessionToken.user_id == user.id).delete()
-    db.commit()
-    db.refresh(user)
-    return create_session_response(user, db)
+@app.get("/auth/google/callback")
+def google_auth_callback(
+    code: str | None = None,
+    state: str | None = None,
+    error: str | None = None,
+    db: Session = Depends(get_db),
+) -> RedirectResponse:
+    next_path = "/app"
+    try:
+        if error:
+            raise ValueError("Google sign-in was cancelled or denied.")
+        if not code or not state:
+            raise ValueError("Missing Google sign-in callback data.")
+        next_path = verify_oauth_state(state)
+        profile = exchange_google_code(code)
+        email = str(profile.get("email", "")).lower().strip()
+        if not email or not profile.get("email_verified"):
+            raise ValueError("Google account email is not verified.")
+        display_name = clean_google_display_name(str(profile.get("name") or "")) or name_from_email(email)
+        user = db.scalar(select(User).where(User.email == email))
+        if user:
+            user.password_hash = None
+        else:
+            user = User(email=email, display_name=display_name, password_hash=None)
+            db.add(user)
+            try:
+                db.flush()
+            except IntegrityError:
+                db.rollback()
+                user = db.scalar(select(User).where(User.email == email))
+                if not user:
+                    raise
+        auth = create_session_response(user, db)
+        return RedirectResponse(frontend_auth_url(token=auth["token"], next_path=next_path))
+    except Exception:
+        db.rollback()
+        return RedirectResponse(frontend_auth_url(error="Google sign-in failed. Please try again."))
 
 
 def create_session_response(user: User, db: Session) -> dict:
@@ -234,6 +199,87 @@ def create_session_response(user: User, db: Session) -> dict:
     db.commit()
     db.refresh(user)
     return {"user": user, "token": token}
+
+
+def create_oauth_state(next_path: str) -> str:
+    payload = {
+        "next": safe_next_path(next_path),
+        "ts": int(time.time()),
+        "nonce": secrets.token_urlsafe(12),
+    }
+    body = base64.urlsafe_b64encode(json.dumps(payload, separators=(",", ":")).encode()).decode().rstrip("=")
+    signature = sign_oauth_state(body)
+    return f"{body}.{signature}"
+
+
+def verify_oauth_state(state: str) -> str:
+    try:
+        body, signature = state.split(".", 1)
+    except ValueError as exc:
+        raise ValueError("Invalid OAuth state.") from exc
+    expected = sign_oauth_state(body)
+    if not hmac.compare_digest(signature, expected):
+        raise ValueError("Invalid OAuth state signature.")
+    padded = body + "=" * (-len(body) % 4)
+    payload = json.loads(base64.urlsafe_b64decode(padded.encode()).decode())
+    if int(time.time()) - int(payload.get("ts", 0)) > 600:
+        raise ValueError("Expired OAuth state.")
+    return safe_next_path(str(payload.get("next") or "/app"))
+
+
+def sign_oauth_state(body: str) -> str:
+    digest = hmac.new(google_oauth_state_secret().encode(), body.encode(), hashlib.sha256).digest()
+    return base64.urlsafe_b64encode(digest).decode().rstrip("=")
+
+
+def exchange_google_code(code: str) -> dict:
+    data = urllib.parse.urlencode({
+        "code": code,
+        "client_id": google_client_id(),
+        "client_secret": google_client_secret(),
+        "redirect_uri": google_redirect_uri(),
+        "grant_type": "authorization_code",
+    }).encode()
+    request = urllib.request.Request(
+        "https://oauth2.googleapis.com/token",
+        data=data,
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=10) as response:
+            token_payload = json.loads(response.read().decode())
+    except Exception as exc:
+        raise ValueError("Could not exchange Google authorization code.") from exc
+    raw_id_token = token_payload.get("id_token")
+    if not raw_id_token:
+        raise ValueError("Google did not return an ID token.")
+    return id_token.verify_oauth2_token(raw_id_token, google_requests.Request(), google_client_id())
+
+
+def frontend_auth_url(token: str | None = None, error: str | None = None, next_path: str = "/app") -> str:
+    query: dict[str, str] = {}
+    if token:
+        query["token"] = token
+        query["next"] = safe_next_path(next_path)
+    if error:
+        query["error"] = error
+    return f"{frontend_base_url().rstrip('/')}/auth?{urllib.parse.urlencode(query)}"
+
+
+def safe_next_path(value: str) -> str:
+    if not value.startswith("/") or value.startswith("//"):
+        return "/app"
+    if value.startswith("/auth"):
+        return "/app"
+    return value
+
+
+def clean_google_display_name(value: str) -> str:
+    display_name = clean_text(value)
+    if len(display_name) > 120:
+        return display_name[:120].strip()
+    return display_name
 
 
 def get_current_user(
@@ -254,6 +300,18 @@ def get_current_user(
 
 @app.get("/auth/me", response_model=UserResponse)
 def get_me(current_user: Annotated[User, Depends(get_current_user)]) -> User:
+    return current_user
+
+
+@app.patch("/auth/me", response_model=UserResponse)
+def update_me(
+    payload: UserProfileUpdateRequest,
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> User:
+    current_user.display_name = payload.display_name
+    db.commit()
+    db.refresh(current_user)
     return current_user
 
 
@@ -431,7 +489,7 @@ def list_resumes(
 
     response = []
     for resume in resumes:
-        item = _resume_dict(resume, current_user_id=current_user.id)
+        item = _resume_dict(resume, include_latex_source=False, current_user_id=current_user.id)
         parent = fix_parent_by_child_id.get(resume.id)
         if parent:
             item["fix_parent_resume_id"] = parent["resume_id"]
@@ -676,7 +734,7 @@ def update_resume_landed_companies(
     resume.landed_companies = validate_landed_companies(payload.landed_companies)
     db.commit()
     db.refresh(resume)
-    return _resume_dict(resume, current_user_id=current_user.id)
+    return _resume_dict(resume, include_latex_source=False, current_user_id=current_user.id)
 
 
 @app.put("/resumes/{resume_id}/score", response_model=ResumeScoreResponse)
@@ -1180,7 +1238,7 @@ def normalize_latex_visible_source(source: str) -> tuple[str, list[tuple[int, in
     return "".join(normalized_chars), normalized_spans
 
 
-def _resume_dict(r: Resume, include_latex_source: bool = True, current_user_id: int | None = None) -> dict:
+def _resume_dict(r: Resume, include_latex_source: bool = False, current_user_id: int | None = None) -> dict:
     open_count = sum(1 for c in r.comments if c.status == "open")
     return {
         "id": r.id, "user_id": r.user_id, "title": r.title, "file_name": r.file_name,
@@ -1360,110 +1418,26 @@ def _comment_dict(
     }
 
 
-def hash_password(password: str) -> str:
-    n = 2**14
-    r = 8
-    p = 1
-    salt = secrets.token_hex(16)
-    digest = hashlib.scrypt(password.encode(), salt=salt.encode(), n=n, r=r, p=p, dklen=64)
-    return f"scrypt${n}${r}${p}${salt}${digest.hex()}"
-
-
-def verify_password(password: str, stored_hash: str) -> bool:
-    try:
-        parts = stored_hash.split("$")
-    except ValueError:
-        return False
-    if not parts:
-        return False
-    if parts[0] == "scrypt" and len(parts) == 6:
-        _, n, r, p, salt, expected = parts
-        digest = hashlib.scrypt(password.encode(), salt=salt.encode(), n=int(n), r=int(r), p=int(p), dklen=64)
-        return hmac.compare_digest(digest.hex(), expected)
-    if parts[0] == "pbkdf2_sha256" and len(parts) == 4:
-        _, iterations, salt, expected = parts
-        digest = hashlib.pbkdf2_hmac("sha256", password.encode(), salt.encode(), int(iterations))
-        return hmac.compare_digest(digest.hex(), expected)
-    return False
-
-
-def create_password_reset_token(user: User, db: Session) -> str:
-    raw_token = secrets.token_urlsafe(48)
-    token_hash = hash_reset_token(raw_token)
-    now = datetime.now(timezone.utc)
-    db.query(PasswordResetToken).filter(
-        PasswordResetToken.user_id == user.id,
-        PasswordResetToken.used_at.is_(None),
-        PasswordResetToken.expires_at > now,
-    ).update({"used_at": now})
-    db.add(PasswordResetToken(
-        user_id=user.id,
-        token_hash=token_hash,
-        expires_at=datetime.fromtimestamp(time.time() + password_reset_ttl_seconds(), tz=timezone.utc),
-    ))
-    db.commit()
-    return raw_token
-
-
-def verify_password_reset_token(token: str, db: Session) -> PasswordResetToken:
-    token_hash = hash_reset_token(token.strip())
-    reset_token = db.scalar(select(PasswordResetToken).where(PasswordResetToken.token_hash == token_hash))
-    now = datetime.now(timezone.utc)
-    if not reset_token or reset_token.used_at is not None or reset_token.expires_at < now:
-        raise HTTPException(status_code=400, detail="Invalid or expired reset link")
-    return reset_token
-
-
-def hash_reset_token(token: str) -> str:
-    return hashlib.sha256(f"{password_reset_secret()}:{token}".encode()).hexdigest()
-
-
-def password_reset_ttl_seconds() -> int:
-    return int(os.getenv("PASSWORD_RESET_TTL_SECONDS", "3600"))
-
-
-def send_password_reset_email(email: str, token: str) -> None:
-    reset_url = f"{frontend_base_url().rstrip('/')}/auth?reset_token={token}"
-    subject = "Reset your reviewmyresumeplease password"
-    body = (
-        "You requested a password reset for reviewmyresumeplease.\n\n"
-        f"Use this link within {password_reset_ttl_seconds() // 60} minutes:\n{reset_url}\n\n"
-        "If you did not request this, you can ignore this email."
-    )
-    smtp_host = os.getenv("SMTP_HOST", "").strip()
-    if not smtp_host:
-        print(f"[password-reset] SMTP_HOST not configured. Reset link for {email}: {reset_url}", flush=True)
-        return
-    message = EmailMessage()
-    message["Subject"] = subject
-    message["From"] = os.getenv("SMTP_FROM", os.getenv("SMTP_USERNAME", "no-reply@localhost"))
-    message["To"] = email
-    message.set_content(body)
-    port = int(os.getenv("SMTP_PORT", "587"))
-    username = os.getenv("SMTP_USERNAME", "")
-    password = os.getenv("SMTP_PASSWORD", "")
-    use_tls = os.getenv("SMTP_USE_TLS", "true").lower() != "false"
-    if use_tls:
-        with smtplib.SMTP(smtp_host, port, timeout=10) as smtp:
-            smtp.starttls(context=ssl.create_default_context())
-            if username:
-                smtp.login(username, password)
-            smtp.send_message(message)
-    else:
-        with smtplib.SMTP_SSL(smtp_host, port, timeout=10) as smtp:
-            if username:
-                smtp.login(username, password)
-            smtp.send_message(message)
-
-
 def frontend_base_url() -> str:
     if os.getenv("FRONTEND_BASE_URL"):
         return os.environ["FRONTEND_BASE_URL"]
     return allowed_origins[0] if allowed_origins else "http://localhost:5173"
 
 
-def password_reset_secret() -> str:
-    return os.environ["PASSWORD_RESET_SECRET"]
+def google_client_id() -> str:
+    return os.environ["GOOGLE_CLIENT_ID"]
+
+
+def google_client_secret() -> str:
+    return os.environ["GOOGLE_CLIENT_SECRET"]
+
+
+def google_redirect_uri() -> str:
+    return os.environ["GOOGLE_REDIRECT_URI"]
+
+
+def google_oauth_state_secret() -> str:
+    return os.environ["GOOGLE_OAUTH_STATE_SECRET"]
 
 
 def name_from_email(email: str) -> str:

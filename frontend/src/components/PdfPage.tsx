@@ -231,7 +231,6 @@ export function PdfPage({
       page: pageNumber,
       x: target.x / scale, y: target.y / scale,
       width: target.width / scale, height: target.height / scale,
-      label: redactLine ? target.text : span.text,
     });
   }
 

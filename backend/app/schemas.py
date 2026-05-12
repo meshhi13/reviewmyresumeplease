@@ -2,74 +2,11 @@ from datetime import datetime
 from typing import Any
 import re
 
-from pydantic import BaseModel, EmailStr, Field, field_validator
-
-
-USERNAME_RE = re.compile(r"^[A-Za-z0-9_-]{3,30}$")
+from pydantic import BaseModel, Field, field_validator
 
 
 def clean_text(value: str) -> str:
     return re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", "", value).strip()
-
-
-def validate_strong_password(value: str) -> str:
-    if len(value) < 12:
-        raise ValueError("Password must be at least 12 characters.")
-    if not re.search(r"[A-Z]", value):
-        raise ValueError("Password must include an uppercase letter.")
-    if not re.search(r"[a-z]", value):
-        raise ValueError("Password must include a lowercase letter.")
-    if not re.search(r"\d", value):
-        raise ValueError("Password must include a number.")
-    if not re.search(r"[^A-Za-z0-9]", value):
-        raise ValueError("Password must include a symbol.")
-    return value
-
-
-def validate_username(value: str | None) -> str | None:
-    if value is None:
-        return None
-    username = clean_text(value)
-    if not USERNAME_RE.fullmatch(username):
-        raise ValueError("Username must be 3-30 characters and use only letters, numbers, underscores, or hyphens.")
-    return username
-
-
-class SignInRequest(BaseModel):
-    email: EmailStr
-    password: str = Field(min_length=8, max_length=128)
-
-
-class ForgotPasswordRequest(BaseModel):
-    email: EmailStr
-
-
-class ForgotPasswordResponse(BaseModel):
-    message: str
-
-
-class ResetPasswordRequest(BaseModel):
-    reset_token: str = Field(min_length=1, max_length=500)
-    password: str = Field(min_length=12, max_length=128)
-
-    @field_validator("password")
-    @classmethod
-    def password_is_strong(cls, value: str) -> str:
-        return validate_strong_password(value)
-
-
-class CreateAccountRequest(SignInRequest):
-    display_name: str | None = Field(default=None, max_length=30)
-
-    @field_validator("password")
-    @classmethod
-    def password_is_strong(cls, value: str) -> str:
-        return validate_strong_password(value)
-
-    @field_validator("display_name")
-    @classmethod
-    def username_is_valid(cls, value: str | None) -> str | None:
-        return validate_username(value)
 
 
 class UserResponse(BaseModel):
@@ -80,9 +17,13 @@ class UserResponse(BaseModel):
     model_config = {"from_attributes": True}
 
 
-class AuthResponse(BaseModel):
-    user: UserResponse
-    token: str
+class UserProfileUpdateRequest(BaseModel):
+    display_name: str | None = Field(default=None, max_length=120)
+
+    @field_validator("display_name")
+    @classmethod
+    def display_name_is_clean(cls, value: str | None) -> str:
+        return clean_text(value or "")[:120]
 
 
 class CommentCreateRequest(BaseModel):

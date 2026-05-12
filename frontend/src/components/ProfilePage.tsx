@@ -9,6 +9,7 @@ import type { SavedResume } from "../types";
 
 type Props = {
   user: { id: number; email: string; display_name: string } | null;
+  setUser: React.Dispatch<React.SetStateAction<{ id: number; email: string; display_name: string } | null>>;
   savedResumes: SavedResume[];
   setSavedResumes: React.Dispatch<React.SetStateAction<SavedResume[]>>;
   token: string;
@@ -16,8 +17,11 @@ type Props = {
   onSignOut: () => void;
 };
 
-export function ProfilePage({ user, savedResumes, setSavedResumes, token, apiBase, onSignOut }: Props) {
+export function ProfilePage({ user, setUser, savedResumes, setSavedResumes, token, apiBase, onSignOut }: Props) {
   const h = (): HeadersInit => token ? { Authorization: `Bearer ${token}` } : {};
+  const [editingUsername, setEditingUsername] = useState(false);
+  const [usernameDraft, setUsernameDraft] = useState(user?.display_name || "");
+  const [profileStatus, setProfileStatus] = useState("");
   const [renamingId, setRenamingId] = useState<number | null>(null);
   const [renameValue, setRenameValue] = useState("");
   const [editingCompaniesId, setEditingCompaniesId] = useState<number | null>(null);
@@ -41,6 +45,35 @@ export function ProfilePage({ user, savedResumes, setSavedResumes, token, apiBas
 
     return { roots, childrenByParent };
   }, [savedResumes]);
+
+  const startUsernameEdit = () => {
+    setUsernameDraft(user?.display_name || "");
+    setProfileStatus("");
+    setEditingUsername(true);
+  };
+
+  const saveUsername = async (displayName = usernameDraft) => {
+    const cleaned = displayName.trim().replace(/\s+/g, " ");
+    const res = await fetch(`${apiBase}/auth/me`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", ...(h()) },
+      body: JSON.stringify({ display_name: cleaned }),
+    });
+    const payload = await res.json().catch(() => null);
+    if (!res.ok) {
+      setProfileStatus(payload?.detail ?? "Could not update your username.");
+      return;
+    }
+    setUser(payload);
+    setUsernameDraft(payload.display_name || "");
+    setEditingUsername(false);
+    setProfileStatus(cleaned ? "Username updated." : "Username removed.");
+  };
+
+  const removeUsername = () => {
+    setUsernameDraft("");
+    saveUsername("");
+  };
 
   const startRename = (r: SavedResume) => {
     setRenamingId(r.id);
@@ -245,10 +278,35 @@ export function ProfilePage({ user, savedResumes, setSavedResumes, token, apiBas
       </div>
 
       <div className="profile-info-card">
-        <div className="profile-avatar">{user?.display_name?.charAt(0)?.toUpperCase() ?? "?"}</div>
+        <div className="profile-avatar">{(user?.display_name || user?.email)?.charAt(0)?.toUpperCase() ?? "?"}</div>
         <div className="profile-details">
-          <h3>{user?.display_name}</h3>
+          {editingUsername ? (
+            <div className="profile-username-editor">
+              <input
+                autoFocus
+                maxLength={120}
+                placeholder="Username"
+                value={usernameDraft}
+                onChange={e => setUsernameDraft(e.target.value)}
+                onKeyDown={e => {
+                  if (e.key === "Enter") saveUsername();
+                  if (e.key === "Escape") setEditingUsername(false);
+                }}
+              />
+              <button className="icon-btn" title="Save username" onClick={() => saveUsername()}><Check size={14} /></button>
+              <button className="icon-btn" title="Cancel" onClick={() => setEditingUsername(false)}><X size={14} /></button>
+            </div>
+          ) : (
+            <div className="profile-username-row">
+              <h3>{user?.display_name || "No username set"}</h3>
+              <button className="icon-btn" title="Edit username" onClick={startUsernameEdit}><Edit2 size={13} /></button>
+              {user?.display_name && (
+                <button className="icon-btn danger" title="Remove username" onClick={removeUsername}><Trash2 size={13} /></button>
+              )}
+            </div>
+          )}
           <p>{user?.email}</p>
+          {profileStatus && <span className="profile-status">{profileStatus}</span>}
         </div>
         <button className="secondary-button signout-btn" onClick={onSignOut}><LogOut size={14} /> Sign Out</button>
       </div>

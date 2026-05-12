@@ -1,6 +1,6 @@
-import { ChangeEvent, FormEvent, SyntheticEvent, useEffect, useMemo, useRef, useState } from "react";
+import { ChangeEvent, useEffect, useMemo, useRef, useState } from "react";
 import { Link, Navigate, Route, Routes, useNavigate, useLocation } from "react-router-dom";
-import { Bell, CheckSquare, Code2, Columns2, Eye, FileText, KeyRound, LogOut, Mail, MessageSquare, RotateCcw, Save, Shield, Square, Upload, User as UserIcon, Users as UsersIcon, Wand2, X } from "lucide-react";
+import { Bell, CheckSquare, Code2, Columns2, Eye, FileText, LogOut, MessageSquare, RotateCcw, Save, Shield, Square, Upload, User as UserIcon, Users as UsersIcon, Wand2, X } from "lucide-react";
 import { PdfDocument, loadPdfDocument } from "./pdfjs";
 import { PdfPage } from "./components/PdfPage";
 import { BrowsePage } from "./components/BrowsePage";
@@ -204,8 +204,6 @@ const STARTER_LATEX = String.raw`%-------------------------
 `;
 
 type User = { id: number; email: string; display_name: string };
-type AuthResponse = { user: User; token: string };
-type AuthMode = "sign-in" | "create-account" | "forgot-password" | "reset-password";
 type AuthPopup = { kind: "error" | "success"; message: string };
 type EditorViewMode = "source" | "split" | "preview";
 
@@ -213,10 +211,6 @@ type EditorViewMode = "source" | "split" | "preview";
 
 function App() {
   const [user, setUser] = useState<User | null>(null);
-  const [authMode, setAuthMode] = useState<AuthMode>("sign-in");
-  const [email, setEmail] = useState(""); const [password, setPassword] = useState("");
-  const [confirmPassword, setConfirmPassword] = useState(""); const [displayName, setDisplayName] = useState("");
-  const [resetToken, setResetToken] = useState("");
   const [authToken, setAuthToken] = useState("");
   const [pdf, setPdf] = useState<PdfDocument | null>(null);
   const [resumeFile, setResumeFile] = useState<File | null>(null);
@@ -269,16 +263,30 @@ function App() {
   useEffect(() => {
     if (location.pathname !== "/auth") return;
     const params = new URLSearchParams(location.search);
-    const token = params.get("reset_token");
+    const token = params.get("token");
+    const error = params.get("error");
+    const nextPath = params.get("next") || "/app";
+    if (error) {
+      showAuthError(error);
+      navigate("/auth", { replace: true });
+      return;
+    }
     if (!token) return;
-    setResetToken(token);
-    setAuthMode("reset-password");
-    setPassword("");
-    setConfirmPassword("");
-    setEmail("");
-    setStatus("Choose a new password.");
-    setAuthPopup(null);
-    navigate("/auth", { replace: true });
+    localStorage.setItem("token", token);
+    setAuthToken(token);
+    fetch(`${API}/auth/me`, { headers: { Authorization: `Bearer ${token}` } })
+      .then(r => r.ok ? r.json() : Promise.reject())
+      .then((u: User) => {
+        setUser(u);
+        setStatus("Welcome back.");
+        navigate(toAppPath(nextPath), { replace: true });
+      })
+      .catch(() => {
+        localStorage.removeItem("token");
+        setAuthToken("");
+        showAuthError("Google sign-in failed. Please try again.");
+        navigate("/auth", { replace: true });
+      });
   }, [location.pathname, location.search, navigate]);
 
   useEffect(() => { if (user && authToken) loadSavedResumes(user.id); }, [user, authToken]);
@@ -368,54 +376,14 @@ function App() {
     navigate(toAppPath(notification.target_url));
   }
 
-  async function handleSignIn(e: SyntheticEvent<HTMLFormElement>) {
-    e.preventDefault();
+  function handleGoogleSignIn() {
     setAuthPopup(null);
-    if (authMode === "forgot-password") {
-      const res = await fetch(`${API}/auth/forgot-password`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email }),
-      });
-      const payload = await res.json().catch(() => null);
-      if (!res.ok) { showAuthError(payload?.detail ?? "Could not start password reset."); return; }
-      setPassword(""); setConfirmPassword("");
-      showAuthSuccess(payload?.message ?? "If that account exists, a reset link has been sent.");
-      return;
-    }
-    if (authMode === "reset-password") {
-      if (password !== confirmPassword) { showAuthError("Passwords do not match."); return; }
-      const res = await fetch(`${API}/auth/reset-password`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ reset_token: resetToken, password }),
-      });
-      const payload = await res.json().catch(() => null);
-      if (!res.ok) { showAuthError(payload?.detail ?? "Could not reset password."); return; }
-      const auth = payload as AuthResponse;
-      setUser(auth.user); setAuthToken(auth.token); localStorage.setItem("token", auth.token);
-      setPassword(""); setConfirmPassword(""); setResetToken(""); navigate("/app");
-      return;
-    }
-    if (authMode === "create-account" && password !== confirmPassword) { showAuthError("Passwords do not match."); return; }
-    if (authMode === "create-account" && /\s/.test(displayName)) { showAuthError("Username cannot contain spaces."); return; }
-    const endpoint = authMode === "sign-in" ? "sign-in" : "create-account";
-    const body = authMode === "sign-in" ? { email, password } : { email, password, display_name: displayName };
-    const res = await fetch(`${API}/auth/${endpoint}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
-    if (!res.ok) { const err = await res.json().catch(() => null); showAuthError(err?.detail ?? "Could not sign in."); return; }
-    const auth = (await res.json()) as AuthResponse;
-    setUser(auth.user); setAuthToken(auth.token); localStorage.setItem("token", auth.token);
-    setConfirmPassword(""); navigate("/app");
+    window.location.assign(`${API}/auth/google/start?next=${encodeURIComponent("/app")}`);
   }
 
   function showAuthError(detail: unknown) {
     const message = formatApiError(detail);
     setAuthPopup({ kind: "error", message });
-    setStatus(message);
-  }
-
-  function showAuthSuccess(message: string) {
-    setAuthPopup({ kind: "success", message });
     setStatus(message);
   }
 
@@ -502,8 +470,8 @@ function App() {
 
   function signOut() {
     setUser(null); setAuthToken(""); localStorage.removeItem("token");
-    setPassword(""); setConfirmPassword(""); setPdf(null); setResumeFile(null);
-    setResetToken(""); setFileName(""); setEditingResumeId(null); setRedactions([]); setSavedResumes([]); setLandedCompanies([]); setCustomCompany(""); setParentResumeId(null); setNotifications([]); navigate("/auth");
+    setPdf(null); setResumeFile(null);
+    setFileName(""); setEditingResumeId(null); setRedactions([]); setSavedResumes([]); setLandedCompanies([]); setCustomCompany(""); setParentResumeId(null); setNotifications([]); navigate("/auth");
   }
 
   function toggleLandedCompany(company: string) {
@@ -581,75 +549,27 @@ function App() {
   }
 
   /* ── AUTH ── */
-  const authTitle =
-    authMode === "create-account" ? "Create your account." :
-      authMode === "forgot-password" ? "Reset your password." :
-        authMode === "reset-password" ? "Choose a new password." :
-          "Sign in to continue.";
-  const authSubmitText =
-    authMode === "create-account" ? "Create Account" :
-      authMode === "forgot-password" ? "Send Reset Link" :
-        authMode === "reset-password" ? "Reset Password" :
-          "Sign In";
   const authView = (
     <main className="auth-screen">
-      <form className="auth-panel" onSubmit={handleSignIn}>
+      <div className="auth-panel">
         <div className="auth-brand">
           <div className="icon-btn" style={{ width: 48, height: 48, borderRadius: 12, background: "var(--accent-dim)", color: "var(--accent)", border: "none", marginBottom: 8 }}>
             <Shield size={24} />
           </div>
           <h1>reviewmyresumeplease</h1>
-          <p className="auth-subtitle">{authTitle}</p>
-        </div>
-        <div className="auth-tabs">
-          <button className={authMode === "sign-in" ? "selected" : ""} type="button" onClick={() => { setAuthPopup(null); setAuthMode("sign-in"); }}>Sign In</button>
-          <button className={authMode === "create-account" ? "selected" : ""} type="button" onClick={() => { setAuthPopup(null); setAuthMode("create-account"); }}>Register</button>
+          <p className="auth-subtitle">Sign in with your Google account.</p>
         </div>
         {authPopup && (
           <div className={`auth-error-popup ${authPopup.kind}`} role={authPopup.kind === "error" ? "alert" : "status"}>
-            <strong>{authPopup.kind === "error" ? "Alert" : "Email sent"}</strong>
+            <strong>{authPopup.kind === "error" ? "Alert" : "Signed in"}</strong>
             <span>{authPopup.message}</span>
             <button type="button" aria-label="Dismiss message" onClick={() => setAuthPopup(null)}>×</button>
           </div>
         )}
-        {authMode === "create-account" && (
-          <label><span>Username</span>
-            <input
-              autoComplete="username"
-              maxLength={30}
-              minLength={3}
-              onChange={e => setDisplayName(e.target.value.replace(/\s+/g, ""))}
-              pattern="[A-Za-z0-9_-]{3,30}"
-              placeholder="Ada_Lovelace"
-              required
-              value={displayName}
-            /></label>
-        )}
-        {authMode === "reset-password" ? (
-          <div className="auth-reset-note">
-            This reset applies to the account tied to the link in your email.
-          </div>
-        ) : (
-          <label><span>Email</span><input autoComplete="email" maxLength={100} onChange={e => setEmail(e.target.value)} placeholder="you@example.com" required type="email" value={email} /></label>
-        )}
-        {authMode !== "forgot-password" && (
-          <label><span>{authMode === "reset-password" ? "New Password" : "Password"}</span><input autoComplete={authMode === "sign-in" ? "current-password" : "new-password"} minLength={authMode === "sign-in" ? 8 : 12} maxLength={128} onChange={e => setPassword(e.target.value)} placeholder={authMode === "sign-in" ? "Your password" : "12+ chars, upper, lower, number, symbol"} required type="password" value={password} /></label>
-        )}
-        {(authMode === "create-account" || authMode === "reset-password") && (
-          <label><span>Confirm Password</span><input autoComplete="new-password" minLength={12} maxLength={128} onChange={e => setConfirmPassword(e.target.value)} placeholder="Repeat your password" required type="password" value={confirmPassword} /></label>
-        )}
-        <button className="primary-button" type="submit">{authMode === "reset-password" ? <KeyRound size={16} /> : <Mail size={16} />}{authSubmitText}</button>
-        {authMode === "sign-in" && (
-          <button className="text-btn auth-link" type="button" onClick={() => { setAuthPopup(null); setAuthMode("forgot-password"); setPassword(""); setConfirmPassword(""); setStatus("Enter your account email to reset your password."); }}>
-            Forgot password?
-          </button>
-        )}
-        {(authMode === "forgot-password" || authMode === "reset-password") && (
-          <button className="text-btn auth-link" type="button" onClick={() => { setAuthPopup(null); setAuthMode("sign-in"); setPassword(""); setConfirmPassword(""); setResetToken(""); setStatus("Sign in to upload and save resumes."); }}>
-            Back to sign in
-          </button>
-        )}
-      </form>
+        <button className="primary-button google-auth-button" type="button" onClick={handleGoogleSignIn}>
+          Continue with Google
+        </button>
+      </div>
     </main>
   );
 
@@ -879,8 +799,8 @@ function App() {
                   </div>
                 )}
               </div>
-              <div className="user-avatar">{user?.display_name?.charAt(0)?.toUpperCase() ?? "?"}</div>
-              <span className="user-name">{user?.display_name}</span>
+              <div className="user-avatar">{(user?.display_name || user?.email)?.charAt(0)?.toUpperCase() ?? "?"}</div>
+              <span className="user-name">{user?.display_name || user?.email}</span>
               <button className="icon-btn" onClick={signOut} title="Sign Out" style={{ marginLeft: 8, width: 32, height: 32 }}><LogOut size={14} /></button>
             </div>
           </header>
@@ -893,7 +813,7 @@ function App() {
             )}
             <Routes>
               <Route index element={<BrowsePage token={authToken} apiBase={API} />} />
-              <Route path="profile" element={<ProfilePage user={user} savedResumes={savedResumes} setSavedResumes={setSavedResumes} token={authToken} apiBase={API} onSignOut={signOut} />} />
+              <Route path="profile" element={<ProfilePage user={user} setUser={setUser} savedResumes={savedResumes} setSavedResumes={setSavedResumes} token={authToken} apiBase={API} onSignOut={signOut} />} />
               <Route path="upload" element={uploadView} />
               <Route path="resume/:id" element={<ResumeViewer currentUserId={user?.id ?? null} token={authToken} apiBase={API} />} />
             </Routes>
