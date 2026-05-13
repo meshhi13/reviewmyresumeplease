@@ -717,11 +717,19 @@ def update_resume_latex_source(
     resume.source_format = "latex"
     resume.pdf_data = compile_latex_to_pdf(resume.latex_source)
     resume.content_type = "application/pdf"
-    if payload.title is not None:
-        resume.title = payload.title or resume.title
+    if "title" in payload.model_fields_set:
+        resume.title = payload.title
+    if payload.redactions is not None:
+        resume.redactions = payload.redactions
+    if payload.landed_companies is not None:
+        resume.landed_companies = validate_landed_companies(payload.landed_companies)
+    if payload.anonymized is not None:
+        resume.anonymized = payload.anonymized
+    if payload.notes is not None:
+        resume.notes = payload.notes
     db.commit()
     db.refresh(resume)
-    return _resume_dict(resume, current_user_id=current_user.id)
+    return _resume_dict(resume, include_latex_source=True, current_user_id=current_user.id)
 
 
 @app.patch("/resumes/{resume_id}/landed-companies", response_model=ResumeResponse)
@@ -1426,9 +1434,12 @@ def _comment_dict(
 
 
 def frontend_base_url() -> str:
-    if os.getenv("FRONTEND_BASE_URL"):
-        return os.environ["FRONTEND_BASE_URL"]
-    return allowed_origins[0] if allowed_origins else "http://localhost:5173"
+    configured = os.getenv("FRONTEND_BASE_URL", "").strip()
+    base_url = configured or (allowed_origins[0] if allowed_origins else "http://localhost:5173")
+    parsed = urllib.parse.urlparse(base_url)
+    if parsed.scheme and parsed.netloc and parsed.path not in {"", "/"}:
+        return f"{parsed.scheme}://{parsed.netloc}"
+    return base_url
 
 
 def google_client_id() -> str:

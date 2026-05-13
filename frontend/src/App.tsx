@@ -316,6 +316,8 @@ function App() {
             setRedactions(resume.redactions || []);
             setResumeTitle(resume.title || resume.file_name.replace(/\.pdf$/i, ""));
             setLandedCompanies(resume.landed_companies || []);
+            setAnonymizeResume(resume.anonymized || false);
+            setNotes(resume.notes || "");
             setFileName(resume.file_name);
             setStatus("Editing LaTeX source.");
           })
@@ -433,7 +435,14 @@ function App() {
       const res = await fetch(`${API}/resumes/${editingResumeId}/latex-source`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json", ...authHeaders() },
-        body: JSON.stringify({ latex_source: latexSource, title: resumeTitle }),
+        body: JSON.stringify({
+          latex_source: latexSource,
+          title: resumeTitle,
+          redactions,
+          anonymized: anonymizeResume,
+          notes,
+          landed_companies: landedCompanies,
+        }),
       });
       setIsSaving(false);
       if (!res.ok) {
@@ -442,6 +451,9 @@ function App() {
         setStatus("Could not save this resume.");
         return;
       }
+      const updated: SavedResume = await res.json();
+      setLatexSource(updated.latex_source || latexSource);
+      setSavedResumes(prev => prev.map(r => r.id === updated.id ? updated : r));
       await loadSavedResumes(user.id);
       setStatus("Saved.");
       navigate("/app/profile");

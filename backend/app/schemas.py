@@ -78,11 +78,22 @@ class LatexCompileRequest(BaseModel):
 
 class ResumeLatexSourceRequest(LatexCompileRequest):
     title: str | None = Field(default=None, max_length=255)
+    redactions: list[dict[str, Any]] | None = None
+    landed_companies: list[str] | None = None
+    anonymized: bool | None = None
+    notes: str | None = Field(default=None, max_length=2000)
 
     @field_validator("title")
     @classmethod
     def title_is_clean(cls, value: str | None) -> str | None:
-        return clean_text(value) if value is not None else value
+        if value is None:
+            return value
+        return clean_text(value) or None
+
+    @field_validator("notes")
+    @classmethod
+    def notes_are_clean(cls, value: str | None) -> str:
+        return clean_text(value or "")
 
 
 class CommentResponse(BaseModel):
