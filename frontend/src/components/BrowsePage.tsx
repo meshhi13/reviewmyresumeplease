@@ -132,7 +132,6 @@ export function BrowsePage({ token, apiBase }: Props) {
               </div>
               <div className="card-body">
                 <strong>{r.title || r.file_name}</strong>
-                {r.title && <span className="card-meta" style={{ opacity: 0.6 }}>{r.file_name}</span>}
                 <span className="card-meta"><UsersIcon size={13} />{r.owner_display_name ?? "Anonymous"}</span>
                 <span className="card-meta"><Clock size={13} />{new Date(r.created_at).toLocaleDateString()}</span>
                 <span className="resume-score-badge"><Star size={13} />{r.aggregate_score} score</span>
