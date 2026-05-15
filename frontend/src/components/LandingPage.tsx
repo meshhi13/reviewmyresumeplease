@@ -24,7 +24,7 @@ const demoSlots = [
 ];
 
 const workflow = [
-  { icon: Upload, title: "Build your resume", copy: "Upload LaTeX, compile a PDF preview, redact sensitive details, and tag landed companies." },
+  { icon: Upload, title: "Build your resume", copy: "Upload PDF or LaTeX, redact sensitive details, choose a field, and tag landed companies." },
   { icon: MessageSquare, title: "Collect review issues", copy: "Reviewers leave comments or replacement suggestions directly against highlighted resume lines." },
   { icon: GitBranch, title: "Ship a revision", copy: "Attach a new resume to its parent, link it to the comments it fixes, and keep a visible change tree." },
   { icon: CheckCircle, title: "Close the loop", copy: "Comment authors can resolve one or many fixed issues after reviewing the uploaded revision." },
@@ -63,8 +63,8 @@ export function LandingPage({ isSignedIn }: LandingPageProps) {
           <span className="landing-kicker"><Sparkles size={14} /> Resume review workspace</span>
           <h1>Stop missing out</h1>
           <p>
-            Upload a LaTeX resume, get targeted comments and suggestions, attach revisions to the exact issues they resolve,
-            and browse examples by company, score and popularity.
+            Upload a PDF or LaTeX resume, get targeted comments and suggestions, attach revisions to the exact issues they resolve,
+            and browse examples by field, company, score and popularity.
           </p>
           <div className="landing-cta-row">
             <Link className="primary-button landing-primary" to={isSignedIn ? "/app/upload" : "/auth"}>

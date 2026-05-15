@@ -49,6 +49,7 @@ class Resume(Base):
     content_type: Mapped[str] = mapped_column(String(120), default="application/pdf")
     pdf_data: Mapped[bytes] = mapped_column(LargeBinary)
     source_format: Mapped[str] = mapped_column(String(40), default="pdf")
+    field_category: Mapped[str] = mapped_column(String(40), default="cs")
     latex_source: Mapped[str] = mapped_column(Text, default="")
     redactions: Mapped[list[dict]] = mapped_column(JSONB, default=list)
     landed_companies: Mapped[list[str]] = mapped_column(JSONB, default=list)

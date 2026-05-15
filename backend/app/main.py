@@ -57,6 +57,8 @@ RATE_LIMITS = {
     "default": (240, 60),
 }
 
+FIELD_CATEGORIES = {"engineering", "cs", "finance_consulting"}
+
 allowed_origins = os.environ["ALLOWED_ORIGINS"].split(",")
 
 app.add_middleware(
@@ -110,6 +112,7 @@ def on_startup() -> None:
         connection.execute(text("ALTER TABLE users ALTER COLUMN display_name TYPE VARCHAR(120)"))
         connection.execute(text("ALTER TABLE resumes ADD COLUMN IF NOT EXISTS title VARCHAR(255)"))
         connection.execute(text("ALTER TABLE resumes ADD COLUMN IF NOT EXISTS source_format VARCHAR(40) NOT NULL DEFAULT 'pdf'"))
+        connection.execute(text("ALTER TABLE resumes ADD COLUMN IF NOT EXISTS field_category VARCHAR(40) NOT NULL DEFAULT 'cs'"))
         connection.execute(text("ALTER TABLE resumes ADD COLUMN IF NOT EXISTS latex_source TEXT NOT NULL DEFAULT ''"))
         connection.execute(text("ALTER TABLE resumes ADD COLUMN IF NOT EXISTS landed_companies JSONB NOT NULL DEFAULT '[]'::jsonb"))
         connection.execute(text("ALTER TABLE resumes ADD COLUMN IF NOT EXISTS resolves_comment_id INTEGER"))
@@ -376,17 +379,20 @@ def mark_notification_read(
 @app.get("/resumes/browse", response_model=list[BrowseResumeResponse])
 def browse_resumes(
     status: str | None = None,
+    field_category: str | None = None,
     search: str | None = None,
     company: str | None = None,
     min_score: int | None = None,
     max_score: int | None = None,
-    sort: str = "downvotes",
+    sort: str = "popular",
     db: Annotated[Session, Depends(get_db)] = None,
     current_user: Annotated[User, Depends(get_current_user)] = None,
 ) -> list[dict]:
+    selected_category = validate_field_category(field_category, required=True)
     query = (
         select(Resume)
         .where(Resume.anonymized.is_(False))
+        .where(Resume.field_category == selected_category)
         .options(selectinload(Resume.owner), selectinload(Resume.comments).selectinload(Comment.votes), selectinload(Resume.scores))
     )
     if search:
@@ -424,6 +430,7 @@ def browse_resumes(
             "title": r.title,
             "file_name": r.file_name,
             "source_format": r.source_format,
+            "field_category": r.field_category,
             "redactions": r.redactions,
             "landed_companies": r.landed_companies or [],
             "anonymized": r.anonymized,
@@ -516,6 +523,7 @@ async def save_resume(
     anonymized: bool = Form(False),
     notes: str = Form(""),
     title: str = Form(""),
+    field_category: str = Form("cs"),
     latex_source: str = Form(""),
     landed_companies: str = Form("[]"),
     resolves_comment_id: int | None = Form(None),
@@ -540,6 +548,7 @@ async def save_resume(
     selected_comment_ids = parse_resolves_comment_ids(resolves_comment_ids, resolves_comment_id)
 
     title = clean_text(title)
+    selected_category = validate_field_category(field_category)
     notes = clean_text(notes)
     explicit_parent = None
     if parent_resume_id:
@@ -562,7 +571,8 @@ async def save_resume(
             pdf_data = compile_latex_to_pdf(source)
             file_name = file.filename.removesuffix(".tex") + ".pdf"
         else:
-            if file.content_type != "application/pdf":
+            is_pdf_file = (file.content_type == "application/pdf") or bool(file.filename and file.filename.lower().endswith(".pdf"))
+            if not is_pdf_file:
                 raise HTTPException(status_code=400, detail="Upload a LaTeX source file or PDF")
             pdf_data = raw_file
             file_name = file.filename or "resume.pdf"
@@ -576,6 +586,7 @@ async def save_resume(
         content_type=content_type,
         pdf_data=pdf_data,
         source_format=source_format,
+        field_category=selected_category,
         latex_source=source,
         redactions=parsed_redactions,
         landed_companies=validated_companies,
@@ -719,6 +730,8 @@ def update_resume_latex_source(
     resume.content_type = "application/pdf"
     if "title" in payload.model_fields_set:
         resume.title = payload.title
+    if payload.field_category is not None:
+        resume.field_category = validate_field_category(payload.field_category)
     if payload.redactions is not None:
         resume.redactions = payload.redactions
     if payload.landed_companies is not None:
@@ -747,6 +760,8 @@ def update_resume_landed_companies(
     if resume.user_id != current_user.id:
         raise HTTPException(status_code=403, detail="You can only update your own resumes")
     resume.landed_companies = validate_landed_companies(payload.landed_companies)
+    if payload.field_category is not None:
+        resume.field_category = validate_field_category(payload.field_category)
     db.commit()
     db.refresh(resume)
     return _resume_dict(resume, include_latex_source=False, current_user_id=current_user.id)
@@ -1257,7 +1272,7 @@ def _resume_dict(r: Resume, include_latex_source: bool = False, current_user_id:
     open_count = sum(1 for c in r.comments if c.status == "open")
     return {
         "id": r.id, "user_id": r.user_id, "title": r.title, "file_name": r.file_name,
-        "source_format": r.source_format, "latex_source": (r.latex_source or "") if include_latex_source else "",
+        "source_format": r.source_format, "field_category": r.field_category or "cs", "latex_source": (r.latex_source or "") if include_latex_source else "",
         "latex_source_hidden_for_privacy": bool((r.latex_source or "") and not include_latex_source),
         "redactions": r.redactions, "landed_companies": r.landed_companies or [],
         "anonymized": r.anonymized,
@@ -1334,6 +1349,17 @@ def validate_landed_companies(companies: list) -> list[str]:
         if match and match.lower() not in {existing.lower() for existing in normalized}:
             normalized.append(match)
     return normalized
+
+
+def validate_field_category(category: str | None, required: bool = False) -> str:
+    value = (category or "").strip()
+    if not value:
+        if required:
+            raise HTTPException(status_code=400, detail="Select a field category")
+        return "cs"
+    if value not in FIELD_CATEGORIES:
+        raise HTTPException(status_code=400, detail="Invalid field category")
+    return value
 
 
 def parse_resolves_comment_ids(raw_ids: str, legacy_id: int | None) -> list[int]:

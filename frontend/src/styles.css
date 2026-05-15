@@ -2682,7 +2682,7 @@ h4 {
   z-index: 10;
 }
 
-.toolbar div:first-child {
+.toolbar > div:first-child {
   display: flex;
   flex-direction: column;
   gap: 3px;
@@ -2752,19 +2752,30 @@ h4 {
 
 .zoom-control {
   align-items: center;
+  background: var(--bg-card);
   border: 1px solid var(--border);
-  display: grid;
-  grid-template-columns: 36px 56px 36px;
+  display: inline-grid;
+  flex: 0 0 auto;
+  grid-template-columns: 36px 58px 36px;
+  height: 36px;
+  min-width: 130px;
   overflow: hidden;
+  width: 130px;
 }
 
 .zoom-control button {
+  align-items: center;
   background: transparent;
   border: 0;
   color: var(--fg);
+  display: flex;
   font-size: 1.1rem;
   height: 36px;
+  justify-content: center;
+  min-width: 0;
+  padding: 0;
   transition: background 300ms;
+  width: 36px;
 }
 
 .zoom-control button:hover {
@@ -2782,6 +2793,16 @@ h4 {
   justify-content: center;
   font-size: 0.78rem;
   font-weight: 600;
+  line-height: 1;
+  min-width: 0;
+  white-space: nowrap;
+}
+
+.upload-zoom-control {
+  background: var(--bg-card);
+  display: inline-grid;
+  flex-direction: initial;
+  grid-template-columns: 36px 58px 36px;
 }
 
 .document-stage {
@@ -4068,10 +4089,10 @@ textarea:focus {
 
 /* ===== BROWSE SEARCH/SORT ===== */
 .browse-toolbar {
-  display: flex;
+  display: grid;
   gap: 10px;
   align-items: center;
-  flex-wrap: wrap;
+  grid-template-columns: minmax(220px, 1fr) minmax(145px, 0.58fr) minmax(150px, 0.58fr) 118px minmax(180px, 0.75fr);
   margin-bottom: 24px;
 }
 
@@ -4079,8 +4100,7 @@ textarea:focus {
   display: flex;
   align-items: center;
   gap: 8px;
-  flex: 1;
-  min-width: 200px;
+  min-width: 0;
   background: var(--bg-card);
   border: 1px solid var(--border);
   padding: 8px 14px;
@@ -4112,6 +4132,8 @@ textarea:focus {
   text-transform: uppercase;
   letter-spacing: 0.08em;
   cursor: pointer;
+  min-width: 0;
+  width: 100%;
 }
 
 .sort-select:focus {
@@ -4139,6 +4161,7 @@ textarea:focus {
   display: flex;
   gap: 8px;
   min-height: 38px;
+  min-width: 0;
   padding: 8px 12px;
 }
 
@@ -4147,7 +4170,8 @@ textarea:focus {
   border: 0;
   color: var(--fg);
   font-size: 0.82rem;
-  width: 84px;
+  min-width: 0;
+  width: 100%;
 }
 
 .score-filter input:focus {
@@ -4697,8 +4721,8 @@ textarea:focus {
   }
 
   .zoom-control {
-    grid-template-columns: 1fr 1.4fr 1fr;
-    width: 100%;
+    justify-self: start;
+    width: 130px;
   }
 
   .latex-workspace {

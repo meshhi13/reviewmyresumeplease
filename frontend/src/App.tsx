@@ -7,7 +7,8 @@ import { BrowsePage } from "./components/BrowsePage";
 import { LandingPage } from "./components/LandingPage";
 import { ProfilePage } from "./components/ProfilePage";
 import { ResumeViewer } from "./components/ResumeViewer";
-import { FAANG_PLUS_COMPANIES } from "./constants";
+import { ZoomControl } from "./components/ZoomControl";
+import { FIELD_CATEGORIES, companiesForFieldCategory } from "./constants";
 import type { Redaction, SavedResume, Comment, AppNotification } from "./types";
 
 const API = import.meta.env.VITE_API_BASE_URL;
@@ -206,6 +207,7 @@ const STARTER_LATEX = String.raw`%-------------------------
 type User = { id: number; email: string; display_name: string };
 type AuthPopup = { kind: "error" | "success"; message: string };
 type EditorViewMode = "source" | "split" | "preview";
+type UploadSourceFormat = "latex" | "pdf";
 
 
 
@@ -215,6 +217,7 @@ function App() {
   const [pdf, setPdf] = useState<PdfDocument | null>(null);
   const [resumeFile, setResumeFile] = useState<File | null>(null);
   const [fileName, setFileName] = useState("");
+  const [uploadSourceFormat, setUploadSourceFormat] = useState<UploadSourceFormat>("latex");
   const [latexSource, setLatexSource] = useState(STARTER_LATEX);
   const [editingResumeId, setEditingResumeId] = useState<number | null>(null);
   const [compileError, setCompileError] = useState("");
@@ -228,6 +231,7 @@ function App() {
   const [notes, setNotes] = useState("");
   const [anonymizeResume, setAnonymizeResume] = useState(false);
   const [resumeTitle, setResumeTitle] = useState("");
+  const [fieldCategory, setFieldCategory] = useState("cs");
   const [landedCompanies, setLandedCompanies] = useState<string[]>([]);
   const [customCompany, setCustomCompany] = useState("");
   const [selectedResolveCommentIds, setSelectedResolveCommentIds] = useState<number[]>([]);
@@ -242,6 +246,8 @@ function App() {
   const navigate = useNavigate();
   const location = useLocation();
   const pageNumbers = useMemo(() => pdf ? Array.from({ length: pdf.numPages }, (_, i) => i + 1) : [], [pdf]);
+  const suggestedCompanies = useMemo(() => companiesForFieldCategory(fieldCategory), [fieldCategory]);
+  const isPdfUpload = uploadSourceFormat === "pdf";
 
   function authHeaders(): HeadersInit { return authToken ? { Authorization: `Bearer ${authToken}` } : {}; }
 
@@ -311,10 +317,17 @@ function App() {
         fetch(`${API}/resumes/${editId}`, { headers: authHeaders() })
           .then(r => r.ok ? r.json() : Promise.reject())
           .then((resume: SavedResume) => {
+            if (resume.source_format !== "latex") {
+              setStatus("PDF uploads cannot be edited as LaTeX. Upload a revised file instead.");
+              navigate("/app/upload", { replace: true });
+              return;
+            }
             setEditingResumeId(resume.id);
+            setUploadSourceFormat("latex");
             setLatexSource(resume.latex_source || STARTER_LATEX);
             setRedactions(resume.redactions || []);
             setResumeTitle(resume.title || resume.file_name.replace(/\.pdf$/i, ""));
+            setFieldCategory(resume.field_category || "cs");
             setLandedCompanies(resume.landed_companies || []);
             setAnonymizeResume(resume.anonymized || false);
             setNotes(resume.notes || "");
@@ -399,11 +412,32 @@ function App() {
 
   async function handleUpload(e: ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]; if (!file) return;
-    if (!file.name.toLowerCase().endsWith(".tex")) { setStatus("Please upload a .tex file."); return; }
-    setStatus("Reading LaTeX source…");
+    const lowerName = file.name.toLowerCase();
+    setEditingResumeId(null);
+    setRedactions([]);
+    setNotes("");
+    setLandedCompanies([]);
+    setCustomCompany("");
+    setFileName(file.name);
+    setResumeFile(file);
+    setCompileError("");
+    if (lowerName.endsWith(".pdf") || file.type === "application/pdf") {
+      setStatus("Loading PDF preview...");
+      setUploadSourceFormat("pdf");
+      setLatexSource("");
+      const data = await file.arrayBuffer();
+      setPdf(await loadPdfDocument(data));
+      setEditorViewMode("preview");
+      setStatus("PDF loaded. Add redactions, category, companies, then save for review.");
+      return;
+    }
+    if (!lowerName.endsWith(".tex")) { setStatus("Please upload a .tex or .pdf file."); return; }
+    setStatus("Reading LaTeX source...");
     const source = await file.text();
+    setUploadSourceFormat("latex");
     setLatexSource(source);
-    setFileName(file.name); setResumeFile(file); setEditingResumeId(null); setRedactions([]); setNotes(""); setLandedCompanies([]); setCustomCompany("");
+    setPdf(null);
+    setEditorViewMode("split");
     setStatus("LaTeX source loaded. Compile it to preview.");
   }
 
@@ -429,15 +463,18 @@ function App() {
   }
 
   async function saveResume() {
-    if (!user || !latexSource.trim()) { setStatus("Add LaTeX source first."); return; }
+    if (!user) return;
+    if (isPdfUpload && !resumeFile) { setStatus("Upload a PDF first."); return; }
+    if (!isPdfUpload && !latexSource.trim()) { setStatus("Add LaTeX source first."); return; }
     setIsSaving(true);
-    if (editingResumeId && selectedResolveCommentIds.length === 0) {
+    if (!isPdfUpload && editingResumeId && selectedResolveCommentIds.length === 0) {
       const res = await fetch(`${API}/resumes/${editingResumeId}/latex-source`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json", ...authHeaders() },
         body: JSON.stringify({
           latex_source: latexSource,
           title: resumeTitle,
+          field_category: fieldCategory,
           redactions,
           anonymized: anonymizeResume,
           notes,
@@ -463,7 +500,11 @@ function App() {
     const fd = new FormData();
     fd.append("redactions", JSON.stringify(redactions));
     fd.append("anonymized", String(anonymizeResume)); fd.append("notes", notes);
-    fd.append("title", resumeTitle); fd.append("latex_source", latexSource); fd.append("landed_companies", JSON.stringify(landedCompanies));
+    fd.append("title", resumeTitle);
+    fd.append("field_category", fieldCategory);
+    if (isPdfUpload && resumeFile) fd.append("file", resumeFile);
+    if (!isPdfUpload) fd.append("latex_source", latexSource);
+    fd.append("landed_companies", JSON.stringify(landedCompanies));
     if (selectedResolveCommentIds.length > 0) {
       fd.append("resolves_comment_id", String(selectedResolveCommentIds[0]));
       fd.append("resolves_comment_ids", JSON.stringify(selectedResolveCommentIds));
@@ -477,13 +518,17 @@ function App() {
       setStatus("Could not save this resume.");
       return;
     }
-    await loadSavedResumes(user.id); setStatus("Saved."); setSelectedResolveCommentIds([]); setParentResumeId(null); setLandedCompanies([]); setCustomCompany(""); navigate("/app/profile");
+    await loadSavedResumes(user.id); setStatus("Saved."); setSelectedResolveCommentIds([]); setParentResumeId(null); setLandedCompanies([]); setCustomCompany(""); setResumeFile(null); setFileName(""); setPdf(null); setUploadSourceFormat("latex"); setLatexSource(STARTER_LATEX); navigate("/app/profile");
   }
 
   function signOut() {
     setUser(null); setAuthToken(""); localStorage.removeItem("token");
     setPdf(null); setResumeFile(null);
-    setFileName(""); setEditingResumeId(null); setRedactions([]); setSavedResumes([]); setLandedCompanies([]); setCustomCompany(""); setParentResumeId(null); setNotifications([]); navigate("/auth");
+    setFileName(""); setEditingResumeId(null); setUploadSourceFormat("latex"); setFieldCategory("cs"); setRedactions([]); setSavedResumes([]); setLandedCompanies([]); setCustomCompany(""); setParentResumeId(null); setNotifications([]); navigate("/auth");
+  }
+
+  function selectFieldCategory(nextCategory: string) {
+    setFieldCategory(nextCategory);
   }
 
   function toggleLandedCompany(company: string) {
@@ -531,9 +576,8 @@ function App() {
         throw new Error(err?.detail ?? "Could not load the parent resume.");
       })
       .then(async (resume: SavedResume) => {
-        const inheritedSource = resume.latex_source || STARTER_LATEX;
         setEditingResumeId(null);
-        setLatexSource(inheritedSource);
+        setFieldCategory(resume.field_category || "cs");
         setRedactions(resume.redactions || []);
         setResumeTitle(resume.title ? `${resume.title} revision` : resume.file_name.replace(/\.pdf$/i, " revision"));
         setLandedCompanies(resume.landed_companies || []);
@@ -541,8 +585,17 @@ function App() {
         setResumeFile(null);
         setPdf(null);
         setCompileError("");
-        await compileLatex(inheritedSource);
-        setStatus(isFixParent ? "Loaded the original resume source and redactions for this fix." : "Loaded the parent resume source and redactions.");
+        if (resume.source_format === "latex" && resume.latex_source) {
+          const inheritedSource = resume.latex_source;
+          setUploadSourceFormat("latex");
+          setLatexSource(inheritedSource);
+          await compileLatex(inheritedSource);
+          setStatus(isFixParent ? "Loaded the original resume source and redactions for this fix." : "Loaded the parent resume source and redactions.");
+        } else {
+          setUploadSourceFormat("pdf");
+          setLatexSource("");
+          setStatus("This parent resume is a PDF. Upload a revised PDF or switch to a LaTeX source before saving the fix.");
+        }
       })
       .catch((error: Error) => {
         hydratedParentResumeIdRef.current = null;
@@ -589,7 +642,7 @@ function App() {
   const uploadView = (
     <div className="upload-layout">
       <aside className="upload-sidebar">
-        <label className="upload-target"><Upload size={18} /><span>Import .tex</span><input accept=".tex,text/x-tex,text/plain" type="file" onChange={handleUpload} /></label>
+        <label className="upload-target"><Upload size={18} /><span>Import PDF or .tex</span><input accept=".pdf,application/pdf,.tex,text/x-tex,text/plain" type="file" onChange={handleUpload} /></label>
         <section className="panel">
           <h2>Resume Details</h2>
           <label><span>Title (optional)</span>
@@ -597,12 +650,17 @@ function App() {
               placeholder="e.g. Software Engineer 2025" maxLength={255} value={resumeTitle} onChange={e => setResumeTitle(e.target.value)} />
           </label>
           <div className={`file-row ${fileName ? "uploaded" : "empty"}`}>
-            <FileText size={16} /><span>{fileName || "Editing source directly"}</span>
+            <FileText size={16} /><span>{fileName || (isPdfUpload ? "Upload a PDF" : "Editing source directly")}</span>
           </div>
+          <label><span>Field Category</span>
+            <select className="sort-select" style={{ width: "100%", marginTop: 4 }} value={fieldCategory} onChange={e => selectFieldCategory(e.target.value)}>
+              {FIELD_CATEGORIES.map(category => <option key={category.value} value={category.value}>{category.label}</option>)}
+            </select>
+          </label>
           <div className="company-picker">
             <span>Landed Interview at Company</span>
             <div className="company-chip-grid">
-              {FAANG_PLUS_COMPANIES.map(company => (
+              {suggestedCompanies.map(company => (
                 <button
                   key={company}
                   type="button"
@@ -612,7 +670,7 @@ function App() {
                   {company}
                 </button>
               ))}
-              {landedCompanies.filter(company => !FAANG_PLUS_COMPANIES.some(known => known.toLowerCase() === company.toLowerCase())).map(company => (
+              {landedCompanies.filter(company => !suggestedCompanies.some(known => known.toLowerCase() === company.toLowerCase())).map(company => (
                 <button
                   key={company}
                   type="button"
@@ -709,37 +767,38 @@ function App() {
               Uploading this resume as a proposed fix for {selectedResolveComments.length} issue{selectedResolveComments.length === 1 ? "" : "s"} on {selectedResolveComments[0].resumeTitle}.
             </div>
           )}
-          {editingResumeId && selectedResolveCommentIds.length === 0 && (
+          {!isPdfUpload && editingResumeId && selectedResolveCommentIds.length === 0 && (
             <div className="issue-fix-banner">
               Saving changes to this existing LaTeX resume.
             </div>
           )}
-          <button className="primary-button" disabled={!latexSource.trim() || isSaving} onClick={saveResume}><Save size={14} />{isSaving ? "Saving…" : editingResumeId && selectedResolveCommentIds.length === 0 ? "Save Changes" : "Save for Review"}</button>
+          <button className="primary-button" disabled={isSaving || (isPdfUpload ? !resumeFile : !latexSource.trim())} onClick={saveResume}><Save size={14} />{isSaving ? "Saving..." : !isPdfUpload && editingResumeId && selectedResolveCommentIds.length === 0 ? "Save Changes" : "Save for Review"}</button>
         </section>
       </aside>
       <section className="workspace">
         <header className="toolbar">
-          <div><strong>{pdf ? `${pdf.numPages} page${pdf.numPages === 1 ? "" : "s"}` : "LaTeX Resume Editor"}</strong><span>Edit source, compile, then review the generated PDF preview</span></div>
+          <div><strong>{pdf ? `${pdf.numPages} page${pdf.numPages === 1 ? "" : "s"}` : isPdfUpload ? "PDF Upload" : "LaTeX Resume Editor"}</strong><span>{isPdfUpload ? "Review the uploaded PDF preview and add redactions" : "Edit source, compile, then review the generated PDF preview"}</span></div>
           <div className="toolbar-actions">
-            <div className="editor-view-toggle" aria-label="Editor view">
+            {!isPdfUpload && <div className="editor-view-toggle" aria-label="Editor view">
               <button className={editorViewMode === "source" ? "selected" : ""} onClick={() => setEditorViewMode("source")} title="Show source only"><Code2 size={14} /></button>
               <button className={editorViewMode === "split" ? "selected" : ""} onClick={() => setEditorViewMode("split")} title="Show source and preview"><Columns2 size={14} /></button>
               <button className={editorViewMode === "preview" ? "selected" : ""} onClick={() => setEditorViewMode("preview")} title="Show preview only"><Eye size={14} /></button>
-            </div>
-            <button className="primary-button compile-toolbar-button" disabled={!latexSource.trim() || isCompiling} onClick={() => compileLatex()}>
+            </div>}
+            {!isPdfUpload && <button className="primary-button compile-toolbar-button" disabled={!latexSource.trim() || isCompiling} onClick={() => compileLatex()}>
               <FileText size={14} />{isCompiling ? "Compiling…" : "Compile"}
-            </button>
-            {editorViewMode !== "source" && (
-              <div className="zoom-control">
-                <button onClick={() => setScale(v => Math.max(0.75, v - 0.15))}>−</button>
-                <span>{Math.round(scale * 100)}%</span>
-                <button onClick={() => setScale(v => Math.min(2, v + 0.15))}>+</button>
-              </div>
+            </button>}
+            {(isPdfUpload || editorViewMode !== "source") && (
+              <ZoomControl
+                className="upload-zoom-control"
+                value={scale}
+                onZoomOut={() => setScale(v => Math.max(0.75, v - 0.15))}
+                onZoomIn={() => setScale(v => Math.min(2, v + 0.15))}
+              />
             )}
           </div>
         </header>
-        <div className={`latex-workspace ${editorViewMode}`}>
-          {editorViewMode !== "preview" && (
+        <div className={`latex-workspace ${isPdfUpload ? "preview" : editorViewMode}`}>
+          {!isPdfUpload && editorViewMode !== "preview" && (
             <div className="latex-editor-pane">
               <textarea
                 className="latex-source-editor"
@@ -750,10 +809,10 @@ function App() {
               {compileError && <pre className="latex-error">{compileError}</pre>}
             </div>
           )}
-          {editorViewMode !== "source" && (
+          {(isPdfUpload || editorViewMode !== "source") && (
             <div className="document-stage latex-preview-pane">
               {!pdf ? (
-                <div className="empty-state"><FileText /><h3>Compile a Preview</h3><p>Your generated resume PDF will appear here for redactions and review.</p></div>
+                <div className="empty-state"><FileText /><h3>{isPdfUpload ? "Upload a PDF" : "Compile a Preview"}</h3><p>{isPdfUpload ? "Your uploaded PDF will appear here for redactions and review." : "Your generated resume PDF will appear here for redactions and review."}</p></div>
               ) : (
                 <div className="pages">{pageNumbers.map(n => (
                   <PdfPage key={n} pdf={pdf} pageNumber={n} scale={scale}

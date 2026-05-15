@@ -1,8 +1,10 @@
 import { useState, useEffect, useMemo, useRef } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import { ArrowLeft, MessageSquare, FileWarning, RotateCcw, Send, Briefcase, GitPullRequest, CheckCircle, Wand2, Share2, CheckSquare, Square, Star } from "lucide-react";
+import { ArrowLeft, MessageSquare, FileWarning, RotateCcw, Send, Briefcase, GitPullRequest, CheckCircle, Wand2, Share2, CheckSquare, Square, Star, GraduationCap } from "lucide-react";
+import { fieldCategoryLabel } from "../constants";
 import { loadPdfDocument } from "../pdfjs";
 import { PdfPage } from "./PdfPage";
+import { ZoomControl } from "./ZoomControl";
 import type { Comment, Redaction } from "../types";
 import type { PdfDocument } from "../pdfjs";
 
@@ -48,6 +50,8 @@ export function ResumeViewer({ currentUserId, token, apiBase }: Props) {
   const [replyBody, setReplyBody] = useState("");
   const [isOwner, setIsOwner] = useState(false);
   const [resumeTitle, setResumeTitle] = useState("");
+  const [sourceFormat, setSourceFormat] = useState("");
+  const [fieldCategory, setFieldCategory] = useState("");
   const [latexSource, setLatexSource] = useState("");
   const [landedCompanies, setLandedCompanies] = useState<string[]>([]);
   const [reviewStatus, setReviewStatus] = useState("");
@@ -110,6 +114,8 @@ export function ResumeViewer({ currentUserId, token, apiBase }: Props) {
       .then(r => r.ok ? r.json() : Promise.reject())
       .then((meta: any) => {
         setResumeTitle(meta.title || meta.file_name);
+        setSourceFormat(meta.source_format || "pdf");
+        setFieldCategory(meta.field_category || "cs");
         setReviewStatus(meta.review_status);
         setIsOwner(meta.user_id === currentUserId);
         setRedactions(meta.redactions || []);
@@ -184,7 +190,7 @@ export function ResumeViewer({ currentUserId, token, apiBase }: Props) {
       return;
     }
     const replacement = visibleSuggestionReplacement.trim();
-    const includeSuggestion = commentKind === "suggestion" && visibleTextSuggestion && replacement && replacement !== visibleTextSuggestion.original;
+    const includeSuggestion = sourceFormat === "latex" && commentKind === "suggestion" && visibleTextSuggestion && replacement && replacement !== visibleTextSuggestion.original;
     const res = await fetch(`${apiBase}/resumes/${resumeId}/comments`, {
       method: "POST",
       headers: { "Content-Type": "application/json", ...(h()) },
@@ -337,25 +343,29 @@ export function ResumeViewer({ currentUserId, token, apiBase }: Props) {
           <div className="viewer-title-block">
             <div className="viewer-title-row">
               <strong>{resumeTitle || "Resume"}</strong>
-              <span className="resume-score-badge"><Star size={13} />{aggregateScore} score · {scoreCount} rating{scoreCount === 1 ? "" : "s"}</span>
-              {landedCompanies.length > 0 && (
-                <div className="toolbar-tags">
+              <div className="toolbar-tags"> 
+                <span className="resume-score-badge"><Star size={13} />{aggregateScore} score · {scoreCount} rating{scoreCount === 1 ? "" : "s"}</span>
+                <span className="company-tag"><GraduationCap size={11} />{fieldCategoryLabel(fieldCategory)}</span>
+                {landedCompanies.length > 0 && (
+                  <>
                   {landedCompanies.map(company => <span key={company} className="company-tag"><Briefcase size={11} />{company}</span>)}
+                  </>
+                )}
                 </div>
-              )}
             </div>
           </div>
           <div className="viewer-toolbar-actions">
-            <div className="zoom-control viewer-zoom-control" aria-label="Zoom controls">
-              <button aria-label="Zoom out" onClick={() => setScale(v => Math.max(0.75, v - 0.15))}>−</button>
-              <span>{Math.round(scale * 100)}%</span>
-              <button aria-label="Zoom in" onClick={() => setScale(v => Math.min(2, v + 0.15))}>+</button>
-            </div>
+            <ZoomControl
+              className="viewer-zoom-control"
+              value={scale}
+              onZoomOut={() => setScale(v => Math.max(0.75, v - 0.15))}
+              onZoomIn={() => setScale(v => Math.min(2, v + 0.15))}
+            />
             <div className="share-control">
               <button className="secondary-button" onClick={shareResume}><Share2 size={14} /> Share</button>
               {shareStatus && <span className="viewer-share-status">{shareStatus}</span>}
             </div>
-            {isOwner && (
+            {isOwner && sourceFormat === "latex" && (
               <button className="secondary-button" onClick={() => navigate(`/app/upload?edit=${resumeId}`)}>
                 Edit LaTeX
               </button>
@@ -602,7 +612,7 @@ export function ResumeViewer({ currentUserId, token, apiBase }: Props) {
               <>
                 <div className="comment-kind-toggle" aria-label="Comment type">
                   <button className={commentKind === "comment" ? "selected" : ""} onClick={() => setCommentKind("comment")}>General comment</button>
-                  <button className={commentKind === "suggestion" ? "selected" : ""} onClick={useSuggestionForDraft}>Suggest change</button>
+                  {sourceFormat === "latex" && <button className={commentKind === "suggestion" ? "selected" : ""} onClick={useSuggestionForDraft}>Suggest change</button>}
                 </div>
                 <div className="visible-suggestion-box">
                   <p>{selectedTextLines.length} selected line{selectedTextLines.length === 1 ? "" : "s"}</p>
@@ -648,7 +658,7 @@ export function ResumeViewer({ currentUserId, token, apiBase }: Props) {
                 </div>
               </>
             ) : (
-              <p className="comment-hint">Select one or more resume lines to leave a general comment or suggest replacement text.</p>
+              <p className="comment-hint">Select one or more resume lines to leave {sourceFormat === "latex" ? "a general comment or suggest replacement text" : "a general comment"}.</p>
             )}
           </div>
         )}

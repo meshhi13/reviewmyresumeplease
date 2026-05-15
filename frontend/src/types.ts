@@ -65,6 +65,7 @@ export type BrowseResume = {
   title: string | null;
   file_name: string;
   source_format: string;
+  field_category: string;
   redactions: Redaction[];
   landed_companies: string[];
   anonymized: boolean;
@@ -96,6 +97,7 @@ export type SavedResume = {
   title: string | null;
   file_name: string;
   source_format: string;
+  field_category: string;
   latex_source: string;
   latex_source_hidden_for_privacy: boolean;
   redactions: Redaction[];

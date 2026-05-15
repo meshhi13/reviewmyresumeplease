@@ -1,8 +1,8 @@
 import { useState, useCallback, useMemo } from "react";
 import type { ReactElement } from "react";
 import { Link } from "react-router-dom";
-import { FileText, Clock, LogOut, Upload, Eye, EyeOff, MessageSquare, Edit2, Check, X, RotateCcw, Trash2, Briefcase, GitBranch, GitCommit, Star } from "lucide-react";
-import { FAANG_PLUS_COMPANIES } from "../constants";
+import { FileText, Clock, LogOut, Upload, Eye, EyeOff, MessageSquare, Edit2, Check, X, RotateCcw, Trash2, Briefcase, GitBranch, GitCommit, Star, GraduationCap } from "lucide-react";
+import { FIELD_CATEGORIES, companiesForFieldCategory, fieldCategoryLabel } from "../constants";
 import type { SavedResume } from "../types";
 
 
@@ -26,6 +26,7 @@ export function ProfilePage({ user, setUser, savedResumes, setSavedResumes, toke
   const [renameValue, setRenameValue] = useState("");
   const [editingCompaniesId, setEditingCompaniesId] = useState<number | null>(null);
   const [companyDraft, setCompanyDraft] = useState<string[]>([]);
+  const [categoryDraft, setCategoryDraft] = useState("cs");
   const [customCompanyDraft, setCustomCompanyDraft] = useState("");
 
   const resumeTree = useMemo(() => {
@@ -95,7 +96,12 @@ export function ProfilePage({ user, setUser, savedResumes, setSavedResumes, toke
   const startCompanyEdit = (r: SavedResume) => {
     setEditingCompaniesId(r.id);
     setCompanyDraft(r.landed_companies || []);
+    setCategoryDraft(r.field_category || "cs");
     setCustomCompanyDraft("");
+  };
+
+  const selectCategoryDraft = (category: string) => {
+    setCategoryDraft(category);
   };
 
   const toggleCompanyDraft = (company: string) => {
@@ -117,7 +123,7 @@ export function ProfilePage({ user, setUser, savedResumes, setSavedResumes, toke
     const res = await fetch(`${apiBase}/resumes/${id}/landed-companies`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json", ...(h()) },
-      body: JSON.stringify({ landed_companies: companyDraft }),
+      body: JSON.stringify({ landed_companies: companyDraft, field_category: categoryDraft }),
     });
     if (res.ok) {
       const updated: SavedResume = await res.json();
@@ -191,6 +197,7 @@ export function ProfilePage({ user, setUser, savedResumes, setSavedResumes, toke
           )}
           <div className="profile-card-meta-row">
             <span className="card-meta"><Clock size={13} />{new Date(r.created_at).toLocaleDateString()}</span>
+            <span className="card-meta"><GraduationCap size={13} />{fieldCategoryLabel(r.field_category)}</span>
             <span className="card-meta"><FileText size={13} />{r.source_format === "latex" ? "LaTeX source" : "PDF upload"}</span>
           </div>
           <div className="company-tag-row">
@@ -202,8 +209,14 @@ export function ProfilePage({ user, setUser, savedResumes, setSavedResumes, toke
           </div>
           {editingCompaniesId === r.id ? (
             <div className="company-editor">
+              <label>
+                <span>Field Category</span>
+                <select className="sort-select" style={{ width: "100%", marginTop: 4 }} value={categoryDraft} onChange={e => selectCategoryDraft(e.target.value)}>
+                  {FIELD_CATEGORIES.map(category => <option key={category.value} value={category.value}>{category.label}</option>)}
+                </select>
+              </label>
               <div className="company-chip-grid compact">
-                {FAANG_PLUS_COMPANIES.map(company => (
+                {companiesForFieldCategory(categoryDraft).map(company => (
                   <button
                     key={company}
                     type="button"
@@ -213,7 +226,7 @@ export function ProfilePage({ user, setUser, savedResumes, setSavedResumes, toke
                     {company}
                   </button>
                 ))}
-                {companyDraft.filter(company => !FAANG_PLUS_COMPANIES.some(known => known.toLowerCase() === company.toLowerCase())).map(company => (
+                {companyDraft.filter(company => !companiesForFieldCategory(categoryDraft).some(known => known.toLowerCase() === company.toLowerCase())).map(company => (
                   <button
                     key={company}
                     type="button"
@@ -240,7 +253,7 @@ export function ProfilePage({ user, setUser, savedResumes, setSavedResumes, toke
               </div>
             </div>
           ) : (
-            <button className="text-btn company-edit-btn" onClick={() => startCompanyEdit(r)}>Edit landed companies</button>
+            <button className="text-btn company-edit-btn" onClick={() => startCompanyEdit(r)}>Edit field and companies</button>
           )}
         </div>
 
@@ -258,7 +271,7 @@ export function ProfilePage({ user, setUser, savedResumes, setSavedResumes, toke
               <button className="icon-btn" title="Resubmit for review" onClick={() => resubmit(r.id)}><RotateCcw size={16} /></button>
             )}
             <Link to={`/app/resume/${r.id}`} className="secondary-button compact-action">View</Link>
-            <Link to={`/app/upload?edit=${r.id}`} className="secondary-button compact-action">Edit LaTeX</Link>
+            {r.source_format === "latex" && <Link to={`/app/upload?edit=${r.id}`} className="secondary-button compact-action">Edit LaTeX</Link>}
             <button className="icon-btn" title="Delete resume" style={{ color: "#c0392b", borderColor: "rgba(192,57,43,0.3)" }} onClick={() => deleteResume(r.id)}><Trash2 size={16} /></button>
           </div>
         </div>
@@ -308,7 +321,6 @@ export function ProfilePage({ user, setUser, savedResumes, setSavedResumes, toke
           <p>{user?.email}</p>
           {profileStatus && <span className="profile-status">{profileStatus}</span>}
         </div>
-        <button className="secondary-button signout-btn" onClick={onSignOut}><LogOut size={14} /> Sign Out</button>
       </div>
 
       <div className="profile-section-header">

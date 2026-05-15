@@ -78,6 +78,7 @@ class LatexCompileRequest(BaseModel):
 
 class ResumeLatexSourceRequest(LatexCompileRequest):
     title: str | None = Field(default=None, max_length=255)
+    field_category: str | None = Field(default=None, max_length=40)
     redactions: list[dict[str, Any]] | None = None
     landed_companies: list[str] | None = None
     anonymized: bool | None = None
@@ -137,6 +138,7 @@ class ResumeTitleRequest(BaseModel):
 
 class ResumeLandedCompaniesRequest(BaseModel):
     landed_companies: list[str] = Field(default_factory=list, max_length=20)
+    field_category: str | None = Field(default=None, max_length=40)
 
 
 class ResumeScoreRequest(BaseModel):
@@ -156,6 +158,7 @@ class BrowseResumeResponse(BaseModel):
     title: str | None
     file_name: str
     source_format: str
+    field_category: str
     redactions: list[dict[str, Any]]
     landed_companies: list[str]
     anonymized: bool
@@ -179,6 +182,7 @@ class ResumeResponse(BaseModel):
     title: str | None
     file_name: str
     source_format: str
+    field_category: str
     latex_source: str
     latex_source_hidden_for_privacy: bool = False
     redactions: list[dict[str, Any]]
