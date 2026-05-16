@@ -2995,6 +2995,17 @@ textarea:focus {
   border-radius: 4px;
   position: relative;
   overflow: hidden;
+  user-select: none;
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+}
+
+.pdf-page canvas {
+  display: block;
+  pointer-events: none;
+  user-select: none;
+  -webkit-user-drag: none;
+  -webkit-user-select: none;
 }
 
 .text-hotspot {

@@ -1,4 +1,4 @@
-import { MouseEvent, MutableRefObject, useEffect, useMemo, useRef, useState } from "react";
+import { ClipboardEvent, DragEvent, MouseEvent, MutableRefObject, useEffect, useMemo, useRef, useState } from "react";
 import type { PDFPageProxy, TextItem } from "pdfjs-dist/types/src/display/api";
 import type { PdfDocument } from "../pdfjs";
 import type { Comment, DragBox, Redaction } from "../types";
@@ -225,6 +225,10 @@ export function PdfPage({
     setDraftBox(null);
   }
 
+  function preventPageCopy(event: ClipboardEvent<HTMLDivElement> | DragEvent<HTMLDivElement> | MouseEvent<HTMLDivElement>) {
+    event.preventDefault();
+  }
+
   function redactText(span: TextSpan, redactLine: boolean) {
     const target = redactLine ? span.line : span;
     addRedaction({
@@ -297,10 +301,14 @@ export function PdfPage({
         onMouseLeave={allowEdit ? handleMouseUp : commentMode ? handleSelectionMouseUp : undefined}
         onMouseMove={allowEdit || commentMode ? handleMouseMove : undefined}
         onMouseUp={allowEdit ? handleMouseUp : commentMode ? handleSelectionMouseUp : undefined}
+        onContextMenu={preventPageCopy}
+        onCopy={preventPageCopy}
+        onCut={preventPageCopy}
+        onDragStart={preventPageCopy}
         ref={pageRef}
         style={{ width: pageSize.width, height: pageSize.height, cursor }}
       >
-        <canvas ref={canvasRef} />
+        <canvas ref={canvasRef} draggable={false} aria-hidden="true" />
 
         {/* Text hotspots for redaction mode */}
         {allowEdit ? (
